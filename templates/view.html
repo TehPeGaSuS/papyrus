@@ -11,18 +11,18 @@
     {% if paste.filename or not has_description %}<span class="file-name">{{ paste.filename or 'untitled' }}</span>{% endif %}
     <span class="file-meta">{{ paste.language }} &middot; {{ line_count }} line{{ '' if line_count == 1 else 's' }} &middot; {{ size }}</span>
 </div>
-{% if preview_html is not none %}
-<div class="view-switch" role="group" aria-label="How to show this paste">
-    <a id="viewSource" class="switch-btn{% if not show_preview %} active{% endif %}" href="{{ url_for('view_paste', paste_id=paste.id) }}" aria-current="{{ 'false' if show_preview else 'true' }}">Source</a>
-    <a id="viewPreview" class="switch-btn{% if show_preview %} active{% endif %}" href="{{ url_for('view_paste', paste_id=paste.id, view='preview') }}" aria-current="{{ 'true' if show_preview else 'false' }}">Preview</a>
-</div>
-{% endif %}
 <label class="nav-label" title="Show line numbers">
     <input type="checkbox" id="lineNoToggle" checked> Show lines
 </label>
 <label class="nav-label" title="Toggle word wrap">
     <input type="checkbox" id="wrapToggle"> Wrap
 </label>
+{% if preview_html is not none %}
+<div class="view-switch" role="group" aria-label="How to show this paste">
+    <a id="viewSource" class="switch-btn{% if not show_preview %} active{% endif %}" href="{{ url_for('view_paste', paste_id=paste.id) }}" aria-current="{{ 'false' if show_preview else 'true' }}">Source</a>
+    <a id="viewPreview" class="switch-btn{% if show_preview %} active{% endif %}" href="{{ url_for('view_paste', paste_id=paste.id, view='preview') }}" aria-current="{{ 'true' if show_preview else 'false' }}">Preview</a>
+</div>
+{% endif %}
 <a id="rawBtn" class="nav-btn" href="{{ url_for('view_paste_raw', paste_id=paste.id) }}" target="_blank" rel="noopener">Raw</a>
 <button id="copyBtn" class="nav-btn">Copy</button>
 <button id="downloadBtn" class="nav-btn">Download</button>

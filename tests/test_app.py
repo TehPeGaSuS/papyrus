@@ -1587,7 +1587,9 @@ def test_markdown_pastes_get_a_source_preview_switch(client):
     html = client.get('/' + md_paste(client)).get_data(as_text=True)
     assert 'id="viewSource"' in html and 'id="viewPreview"' in html and 'class="view-switch"' in html
     nav = html.split('</nav>')[0]
-    assert nav.index('class="file-name"') < nav.index('id="viewSource"') < nav.index('id="lineNoToggle"')
+    # After the checkboxes, which Preview hides: the right-aligned group re-packs when they vanish, and a
+    # switch in front of them would jump away from the cursor. Behind them it stays where it is.
+    assert nav.index('id="wrapToggle"') < nav.index('id="viewSource"') < nav.index('id="viewPreview"') < nav.index('id="rawBtn"')
     article = re.search(r'<article id="mdPreview".*?</article>', html, re.S).group(0)
     assert '<h1>Title</h1>' in article and '<strong>bold</strong>' in article and '<table>' in article
     assert 'href="https://example.org"' in article and 'class="language-python"' in article
