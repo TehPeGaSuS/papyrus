@@ -16,7 +16,10 @@ SQLite for storage, no build step.
 - **Threaded discussions**: optional per-paste comments and nested replies, each in its own box,
   written in Markdown (code fences, tables, links) with a Write/Preview tab. Rendered and sanitised
   on the server
-- **Admin panel** at `/admin` to list and delete pastes
+- **Admin panel** at `/admin` to list and delete pastes and comments, and to work through reports
+- **Reports**: a Report button on every paste and comment, a no-JavaScript report form (reason and an
+  optional note), and a queue in `/admin` with the most-reported items first. Reports exist while the admin
+  panel is enabled (`python3 app.py admin`); `features.reports` switches them off
 - Dark/light theme, auto-saved drafts, keyboard shortcuts, optional recent-pastes page
 
 ## Requirements
@@ -62,6 +65,7 @@ no `config.json`. Restart after changing it.
 - `server.secret_key`: signs the admin session. The `SECRET_KEY` environment variable overrides it
 - `pastes.*`: size limit, default language, expiry options, `recent_limit`
 - `features.show_recent`: enable the `/recent` page
+- `features.reports`: allow reporting (default `true`; also needs the admin panel, since someone has to read them)
 - `admin.*`: managed by `python3 app.py admin`
 - `database.path`: SQLite file, relative to the project directory (default `papyrus.db`)
 
@@ -115,7 +119,10 @@ curl https://host/raw/<id>
 - `POST /api/preview`: render Markdown for the preview tab
 - `POST /api/delete/<id>`: delete a paste with its deletion token
 - `GET /recent` (when enabled), `GET /api/languages`
-- Admin: `GET|POST /admin/login`, `POST /admin/logout`, `GET /admin`, `POST /admin/delete/<id>`
+- `GET|POST /<id>/report` (optional `?comment=<comment id>`): report a paste or a comment
+- Admin: `GET|POST /admin/login`, `POST /admin/logout`, `GET /admin`, `POST /admin/delete/<id>`,
+  `POST /admin/comments/<comment id>/delete` (replies are kept and move up a level),
+  `POST /admin/reports/dismiss`
 
 ## Database
 
@@ -138,6 +145,14 @@ CREATE TABLE comments (
     content TEXT NOT NULL,         -- Markdown source
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
+CREATE TABLE reports (
+    id TEXT PRIMARY KEY, paste_id TEXT NOT NULL,
+    comment_id TEXT NOT NULL DEFAULT '',   -- '' = the paste itself
+    reason TEXT NOT NULL, note TEXT NOT NULL DEFAULT '',
+    reporter TEXT NOT NULL,                -- keyed hash of the address, never the address
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE (paste_id, comment_id, reporter)
+);
 ```
 
 A database from an older end-to-end-encrypted build is migrated on startup: unencrypted pastes are
@@ -155,6 +170,8 @@ kept, encrypted ones stay in `pastes_encrypted_legacy`.
   `X-Forwarded-For` is believed only from `server.trusted_proxy_ips`, so it can't be forged by a visitor.
   See [`webserver/`](webserver/) for proxy configs.
 - Paste IDs are random and at least 12 hex characters long.
+- Reports store only a keyed hash of the reporter's address (to allow one report per visitor and target),
+  never the address; they are rate-limited, and deleting a paste or comment removes its reports.
 - Size limits: `pastes.max_size_bytes` (2 MB default) for pastes, 10 KB for comments.
 - Gunicorn's control socket is named after the project and port (`$XDG_RUNTIME_DIR/papyrus-<port>.ctl`,
   mode 0600) so several instances don't collide.

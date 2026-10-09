@@ -10,31 +10,82 @@
 
 {% block content %}
 <div class="admin-container">
+    {% if cfg.features.get('reports', True) %}
+    <div class="admin-header" id="reports">
+        <h1>Reports{% if reports %} ({{ reports|length }}){% endif %}</h1>
+        {% if not reports %}<p>Nothing has been reported.</p>{% endif %}
+    </div>
+    {% if reports %}
+    <div class="table-responsive">
+        <table class="admin-table">
+            <thead>
+                <tr><th>Reported</th><th>Reports</th><th>Reasons</th><th>Last</th><th>Actions</th></tr>
+            </thead>
+            <tbody>
+                {% for r in reports %}
+                <tr>
+                    <td>
+                        <span class="badge">{% if r.comment_id %}comment{% else %}paste{% endif %}</span>
+                        <a href="{{ url_for('view_paste', paste_id=r.paste_id) }}{% if r.comment_id %}#c-{{ r.comment_id }}{% endif %}" target="_blank">{{ r.title }}</a>
+                        {% if r.nick %}<small>by {{ r.nick }}</small>{% endif %}
+                        <div class="report-snippet">{{ r.snippet }}</div>
+                        {% for note in r.notes %}<div class="report-note">&ldquo;{{ note }}&rdquo;</div>{% endfor %}
+                    </td>
+                    <td>{{ r.count }}</td>
+                    <td>{% for x in r.reasons %}{{ reasons.get(x.reason, x.reason) }}{% if x.n > 1 %} &times;{{ x.n }}{% endif %}{% if not loop.last %}, {% endif %}{% endfor %}</td>
+                    <td>{{ r.last }}</td>
+                    <td class="admin-actions">
+                        <form action="{{ url_for('admin_dismiss_reports') }}" method="POST" class="inline-form">
+                            <input type="hidden" name="paste_id" value="{{ r.paste_id }}">
+                            <input type="hidden" name="comment_id" value="{{ r.comment_id }}">
+                            <button type="submit" class="btn-small">Dismiss</button>
+                        </form>
+                        {% if r.comment_id %}
+                        <form action="{{ url_for('admin_delete_comment', comment_id=r.comment_id) }}" method="POST" class="inline-form" data-confirm="Delete this comment? Its replies stay.">
+                            <button type="submit" class="btn-delete-small">Delete comment</button>
+                        </form>
+                        {% endif %}
+                        <form action="{{ url_for('admin_delete_paste', paste_id=r.paste_id) }}" method="POST" class="inline-form" data-confirm="Delete this paste and all its comments permanently?">
+                            <button type="submit" class="btn-delete-small">Delete paste</button>
+                        </form>
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    {% endif %}
+    {% endif %}
+
     <div class="admin-header">
         <h1>Global Paste Management</h1>
         <p>Total Pastes: {{ pastes|length }}</p>
     </div>
-    
+
     <div class="table-responsive">
         <table class="admin-table">
             <thead>
                 <tr>
-                    <th>ID</th>
+                    <th>Paste</th>
                     <th>Created</th>
                     <th>Expires</th>
                     <th>Views</th>
+                    <th>Comments</th>
+                    <th>Reports</th>
                     <th>Actions</th>
                 </tr>
             </thead>
             <tbody>
                 {% for paste in pastes %}
                 <tr>
-                    <td><a href="{{ url_for('view_paste', paste_id=paste.id) }}" target="_blank"><code>{{ paste.id }}</code></a></td>
+                    <td><a href="{{ url_for('view_paste', paste_id=paste.id) }}" target="_blank">{{ paste.title }}</a> <small><code>{{ paste.id }}</code> &middot; {{ paste.language }}</small></td>
                     <td>{{ paste.created_at }}</td>
                     <td>{{ paste.expires_at or 'Never' }}</td>
                     <td>{{ paste.views }}</td>
+                    <td>{{ paste.comments }}</td>
+                    <td>{{ paste.reports or '' }}</td>
                     <td>
-                        <form action="{{ url_for('admin_delete_paste', paste_id=paste.id) }}" method="POST" onsubmit="return confirm('Delete this paste permanently?')">
+                        <form action="{{ url_for('admin_delete_paste', paste_id=paste.id) }}" method="POST" data-confirm="Delete this paste permanently?">
                             <button type="submit" class="btn-delete-small">Delete</button>
                         </form>
                     </td>

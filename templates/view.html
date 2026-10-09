@@ -15,6 +15,7 @@
 <button id="copyBtn" class="nav-btn">Copy</button>
 <button id="downloadBtn" class="nav-btn">Download</button>
 <button id="deleteBtn" class="nav-btn nav-btn-danger" style="display:none">Delete</button>
+{% if reports_enabled %}<a href="{{ url_for('report', paste_id=paste.id) }}" class="nav-btn" title="Report this paste to the administrator">Report</a>{% endif %}
 <a href="{{ url_for('index') }}" class="nav-btn nav-btn-save">New</a>
 {% if cfg.theme.allow_user_toggle %}
 <button id="themeToggle" class="theme-toggle">🌙</button>
@@ -27,6 +28,9 @@
         <div class="comment-meta{% if c.nick %} has-nick{% endif %}">
             {% if c.nick %}{{ c.nick }} &middot; {% endif %}<time class="comment-time" datetime="{{ c.created_at|utc_iso }}">{{ c.created_at }} UTC</time>
             <button type="button" class="comment-reply" data-id="{{ c.id }}" data-nick="{{ c.nick or 'anonymous' }}">Reply</button>
+            {% if reports_enabled %}<a class="comment-reply" href="{{ url_for('report', paste_id=paste.id, comment=c.id) }}">Report</a>{% endif %}
+            {% if is_admin %}<form method="post" action="{{ url_for('admin_delete_comment', comment_id=c.id) }}" class="inline-form" data-confirm="Delete this comment? Its replies stay.">
+                <input type="hidden" name="return" value="paste"><button type="submit" class="comment-reply comment-delete">Delete</button></form>{% endif %}
         </div>
         <div class="comment-content markdown-body">{{ c.content|markdown }}</div>
     </div>
@@ -37,6 +41,7 @@
 {% endmacro %}
 
 {% block content %}
+{% if request.args.get('reported') %}<div class="notice" role="status">Thanks, your report was sent to the administrator.</div>{% endif %}
 <div class="view-full wrap-lines" id="viewFull"
      data-paste-id="{{ paste.id }}" data-title="{{ paste.title }}" data-language="{{ paste.language }}">
     <pre id="viewPre"{% if prism_lang %} class="language-{{ prism_lang }}"{% endif %}><code id="codeBlock"{% if prism_lang %} class="language-{{ prism_lang }}"{% endif %}>{{ paste.content }}</code></pre>

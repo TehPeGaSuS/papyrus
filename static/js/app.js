@@ -258,3 +258,10 @@ document.addEventListener('keydown', function (e) {
 });
 
 // Removed redundant DOMContentLoaded at the bottom — handled by the single listener at the top.
+
+// Confirmation prompts: <form data-confirm="Are you sure?">. (Inline onsubmit handlers are blocked
+// by the Content-Security-Policy, so forms ask for confirmation through this attribute instead.)
+document.addEventListener('submit', function (e) {
+    var message = e.target && e.target.dataset ? e.target.dataset.confirm : '';
+    if (message && !window.confirm(message)) e.preventDefault();
+});

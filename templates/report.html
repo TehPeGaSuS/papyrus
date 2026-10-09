@@ -1,0 +1,37 @@
+{% extends "base.html" %}
+
+{% block title %}Report — {{ cfg.site.name }}{% endblock %}
+
+{% block nav_actions %}
+<a href="{{ url_for('view_paste', paste_id=paste.id) }}{% if comment %}#c-{{ comment.id }}{% endif %}" class="nav-btn">Back</a>
+{% if cfg.theme.allow_user_toggle %}
+<button id="themeToggle" class="theme-toggle">🌙</button>
+{% endif %}
+{% endblock %}
+
+{% block content %}
+<div class="report-box">
+    <h1>Report {% if comment %}this comment{% else %}this paste{% endif %}</h1>
+    <p class="report-target">
+        {% if comment %}
+        Comment{% if comment.nick %} by <strong>{{ comment.nick }}</strong>{% endif %} on <em>{{ paste.title }}</em>:
+        {% else %}
+        <em>{{ paste.title }}</em>:
+        {% endif %}
+        <span class="report-snippet">{{ snippet }}</span>
+    </p>
+    <form method="post" action="{{ url_for('report', paste_id=paste.id) }}">
+        {% if comment %}<input type="hidden" name="comment" value="{{ comment.id }}">{% endif %}
+        <fieldset class="report-reasons">
+            <legend>Why are you reporting it?</legend>
+            {% for key, label in reasons.items() %}
+            <label><input type="radio" name="reason" value="{{ key }}" required {% if loop.first %}checked{% endif %}> {{ label }}</label>
+            {% endfor %}
+        </fieldset>
+        <label for="note" class="report-note-label">Anything the administrator should know? (optional)</label>
+        <textarea id="note" name="note" class="comment-input" rows="4" maxlength="500"></textarea>
+        <p class="report-hint">Reports go to the site administrator. Your address is not stored with the report.</p>
+        <button type="submit" class="nav-btn nav-btn-save">Send report</button>
+    </form>
+</div>
+{% endblock %}

@@ -276,9 +276,14 @@ def render_markdown(text):
 
 # ── Jinja helpers ─────────────────────────────────────────────────────────────
 
+def _reports_enabled():
+    """Reports need somebody to read them, so they exist only while the admin panel is on."""
+    return bool(_feat.get('reports', True)) and bool(CFG.get('admin', {}).get('enabled', False))
+
 @app.context_processor
 def inject_config():
-    return {'cfg': CFG, 'csp_nonce': getattr(g, 'csp_nonce', '')}
+    return {'cfg': CFG, 'csp_nonce': getattr(g, 'csp_nonce', ''),
+            'reports_enabled': _reports_enabled(), 'is_admin': is_admin()}
 
 @app.template_filter('markdown')
 def markdown_filter(text):
@@ -340,6 +345,19 @@ def _create_tables(conn):
     if 'parent_id' not in _columns(conn, 'comments'):  # created before replies existed
         conn.execute('ALTER TABLE comments ADD COLUMN parent_id TEXT')
     conn.execute('CREATE INDEX IF NOT EXISTS idx_comments_paste ON comments(paste_id)')
+    conn.execute('''
+        CREATE TABLE IF NOT EXISTS reports (
+            id          TEXT PRIMARY KEY,
+            paste_id    TEXT NOT NULL,
+            comment_id  TEXT NOT NULL DEFAULT '',   -- '' = the paste itself (NULL would defeat UNIQUE)
+            reason      TEXT NOT NULL,
+            note        TEXT NOT NULL DEFAULT '',
+            reporter    TEXT NOT NULL,              -- keyed hash of the reporter's address, never the address
+            created_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE (paste_id, comment_id, reporter)
+        )
+    ''')
+    conn.execute('CREATE INDEX IF NOT EXISTS idx_reports_target ON reports(paste_id, comment_id)')
     conn.execute('''
         CREATE TABLE IF NOT EXISTS rate_limits (
             ip_address    TEXT,
@@ -456,8 +474,19 @@ def generate_paste_id():
     return secrets.token_hex(16)[:length]
 
 def _delete_paste(conn, paste_id):
+    conn.execute('DELETE FROM reports WHERE paste_id = ?', (paste_id,))
     conn.execute('DELETE FROM comments WHERE paste_id = ?', (paste_id,))
     conn.execute('DELETE FROM pastes WHERE id = ?', (paste_id,))
+
+def _delete_comment(conn, comment_id):
+    """Remove one comment. Its replies are kept and move up to its parent."""
+    row = conn.execute('SELECT parent_id FROM comments WHERE id = ?', (comment_id,)).fetchone()
+    if row is None:
+        return False
+    conn.execute('UPDATE comments SET parent_id = ? WHERE parent_id = ?', (row['parent_id'], comment_id))
+    conn.execute('DELETE FROM reports WHERE comment_id = ?', (comment_id,))
+    conn.execute('DELETE FROM comments WHERE id = ?', (comment_id,))
+    return True
 
 def _is_trusted_peer(addr):
     try:
@@ -693,7 +722,8 @@ def view_paste(paste_id):
     paste = _get_paste_or_abort(paste_id)
     rows = []
     with _db() as conn:
-        conn.execute('UPDATE pastes SET views = views + 1 WHERE id = ?', (paste_id,))
+        if not is_admin():
+            conn.execute('UPDATE pastes SET views = views + 1 WHERE id = ?', (paste_id,))
         if paste['discussions_enabled']:
             rows = conn.execute(
                 'SELECT id, parent_id, nick, content, created_at FROM comments WHERE paste_id = ?'
@@ -845,6 +875,59 @@ def preview_markdown():
         return jsonify({'error': 'text must be a string under 10 KB'}), 400
     return jsonify({'html': render_markdown(text)})
 
+# ── Reports ───────────────────────────────────────────────────────────────────
+
+_REPORT_REASONS = {
+    'spam':    'Spam or advertising',
+    'abuse':   'Harassment or abuse',
+    'illegal': 'Illegal content',
+    'malware': 'Malware or phishing',
+    'other':   'Something else',
+}
+_MAX_REPORT_NOTE   = 500
+_REPORT_RATE_LIMIT = 10   # reports per 10 minutes per visitor
+
+def _reporter_hash(ip):
+    """Identify a reporter for de-duplication without storing their address."""
+    return hmac.new(app.config['SECRET_KEY'].encode(), ip.encode(), 'sha256').hexdigest()[:32]
+
+def _snippet(text, limit=140):
+    flat = ' '.join((text or '').split())
+    return flat if len(flat) <= limit else flat[:limit - 1].rstrip() + '\u2026'
+
+@app.route('/<string:paste_id>/report', methods=['GET', 'POST'])
+def report(paste_id):
+    if not _reports_enabled():
+        abort(404)
+    paste = _get_paste_or_abort(paste_id)
+    comment_id = (request.values.get('comment') or '').strip()
+    comment = None
+    if comment_id:
+        with _db() as conn:
+            comment = conn.execute('SELECT id, nick, content FROM comments WHERE id = ? AND paste_id = ?',
+                                   (comment_id, paste_id)).fetchone()
+        if comment is None:
+            abort(404)
+    if request.method == 'GET':
+        return render_template('report.html', paste=paste, comment=comment, reasons=_REPORT_REASONS,
+                               snippet=_snippet(comment['content'] if comment else paste['content'], 300))
+
+    if not _is_same_origin():
+        abort(403, 'Cross-origin request blocked.')
+    if not _check_rate_limit(_client_ip(), key_prefix='report', window=600, limit=_REPORT_RATE_LIMIT):
+        abort(429, 'Too many reports. Please wait a few minutes.')
+    reason = request.form.get('reason')
+    if reason not in _REPORT_REASONS:
+        abort(400, 'Choose a reason for the report.')
+    note = _CONTROL_CHARS_RE.sub('', request.form.get('note') or '').strip()[:_MAX_REPORT_NOTE]
+    with _db() as conn:
+        # One report per visitor and target; repeating it is silently accepted.
+        conn.execute('INSERT OR IGNORE INTO reports (id, paste_id, comment_id, reason, note, reporter)'
+                     ' VALUES (?, ?, ?, ?, ?, ?)',
+                     (secrets.token_hex(8), paste_id, comment_id, reason, note, _reporter_hash(_client_ip())))
+        conn.commit()
+    return redirect(url_for('view_paste', paste_id=paste_id, reported=1), code=303)
+
 # ── Admin Panel ───────────────────────────────────────────────────────────────
 
 def is_admin():
@@ -892,9 +975,70 @@ def admin_dashboard():
         return redirect(url_for('admin_login'))
     with _db() as conn:
         pastes = conn.execute(
-            'SELECT id, created_at, expires_at, views FROM pastes ORDER BY created_at DESC'
+            'SELECT p.id, p.title, p.language, p.created_at, p.expires_at, p.views,'
+            ' (SELECT COUNT(*) FROM comments c WHERE c.paste_id = p.id) AS comments,'
+            ' (SELECT COUNT(*) FROM reports r WHERE r.paste_id = p.id) AS reports'
+            ' FROM pastes p ORDER BY p.created_at DESC'
         ).fetchall()
-    return render_template('admin_dashboard.html', pastes=pastes)
+        reports = _report_queue(conn)
+    return render_template('admin_dashboard.html', pastes=pastes, reports=reports,
+                           reasons=_REPORT_REASONS)
+
+def _report_queue(conn, limit=200):
+    """Reported pastes/comments, most-reported first, with what an admin needs to judge them."""
+    queue = []
+    groups = conn.execute(
+        'SELECT paste_id, comment_id, COUNT(*) AS n, MAX(created_at) AS last FROM reports'
+        ' GROUP BY paste_id, comment_id ORDER BY n DESC, last DESC LIMIT ?', (limit,)).fetchall()
+    for g_ in groups:
+        paste = conn.execute('SELECT id, title, content FROM pastes WHERE id = ?', (g_['paste_id'],)).fetchone()
+        if paste is None:
+            continue
+        comment = None
+        if g_['comment_id']:
+            comment = conn.execute('SELECT id, nick, content FROM comments WHERE id = ?',
+                                   (g_['comment_id'],)).fetchone()
+            if comment is None:
+                continue
+        where = (g_['paste_id'], g_['comment_id'])
+        queue.append({
+            'paste_id': paste['id'], 'comment_id': g_['comment_id'], 'count': g_['n'], 'last': g_['last'],
+            'title': paste['title'], 'nick': comment['nick'] if comment else '',
+            'snippet': _snippet(comment['content'] if comment else paste['content']),
+            'reasons': conn.execute('SELECT reason, COUNT(*) AS n FROM reports WHERE paste_id = ? AND comment_id = ?'
+                                    ' GROUP BY reason ORDER BY n DESC', where).fetchall(),
+            'notes': [r['note'] for r in conn.execute(
+                "SELECT note FROM reports WHERE paste_id = ? AND comment_id = ? AND note != ''"
+                ' ORDER BY created_at DESC LIMIT 3', where)],
+        })
+    return queue
+
+@app.route('/admin/reports/dismiss', methods=['POST'])
+def admin_dismiss_reports():
+    if not is_admin():
+        abort(403)
+    if not _is_same_origin():
+        abort(403)
+    with _db() as conn:
+        conn.execute('DELETE FROM reports WHERE paste_id = ? AND comment_id = ?',
+                     (request.form.get('paste_id', ''), request.form.get('comment_id', '')))
+        conn.commit()
+    return redirect(url_for('admin_dashboard'))
+
+@app.route('/admin/comments/<string:comment_id>/delete', methods=['POST'])
+def admin_delete_comment(comment_id):
+    if not is_admin():
+        abort(403)
+    if not _is_same_origin():
+        abort(403)
+    with _db() as conn:
+        row = conn.execute('SELECT paste_id FROM comments WHERE id = ?', (comment_id,)).fetchone()
+        if row:
+            _delete_comment(conn, comment_id)
+            conn.commit()
+    if row and request.form.get('return') == 'paste':
+        return redirect(url_for('view_paste', paste_id=row['paste_id']) + '#discussionsPanel')
+    return redirect(url_for('admin_dashboard'))
 
 @app.route('/admin/delete/<string:paste_id>', methods=['POST'])
 def admin_delete_paste(paste_id):

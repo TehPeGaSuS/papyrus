@@ -592,3 +592,48 @@ pre[class*="language-"], code[class*="language-"] {
 
 /* Keep a linked comment (#c-<id>) clear of the sticky "Discussions" header */
 .comment-item { scroll-margin-top: 5rem; }
+
+/* ── Reports ──────────────────────────────────────────────────────────── */
+.notice {
+    padding: 0.6rem 1.5rem;
+    background: var(--surface);
+    border-bottom: 1px solid var(--border);
+    border-left: 4px solid var(--primary);
+    color: var(--text);
+    font-size: 0.875rem;
+}
+.report-box { max-width: 36rem; margin: 2rem auto; padding: 0 1rem; }
+.report-box h1 { font-size: 1.3rem; margin-bottom: 0.75rem; }
+.report-target { color: var(--text-sub); font-size: 0.875rem; margin-bottom: 1rem; }
+.report-snippet {
+    display: block; margin-top: 0.4rem; padding: 0.5rem 0.75rem;
+    background: var(--code-bg); border: 1px solid var(--border); border-radius: var(--radius);
+    color: var(--text); font-family: var(--mono); font-size: 0.8rem; word-break: break-word;
+}
+.report-reasons { border: 1px solid var(--border); border-radius: var(--radius); padding: 0.5rem 0.9rem 0.7rem; margin-bottom: 1rem; }
+.report-reasons legend { padding: 0 0.4rem; font-size: 0.85rem; color: var(--text-sub); }
+.report-reasons label { display: block; padding: 0.2rem 0; font-size: 0.9rem; cursor: pointer; }
+.report-note-label { display: block; margin-bottom: 0.3rem; font-size: 0.85rem; color: var(--text-sub); }
+.report-hint { font-size: 0.75rem; color: var(--text-muted); margin: 0.4rem 0 1rem; }
+
+.inline-form { display: inline; margin: 0; }
+.comment-delete { color: var(--danger); }
+.comment-delete:hover { color: var(--danger); text-decoration: underline; }
+a.comment-reply { text-decoration: none; font-weight: 400; color: var(--text-muted); }
+a.comment-reply:hover { text-decoration: underline; color: var(--primary); }
+
+.admin-container .table-responsive + .admin-header { margin-top: 2.5rem; }
+.admin-container .report-snippet { font-size: 0.75rem; padding: 0.3rem 0.5rem; max-width: 36rem; }
+.report-note { margin-top: 0.3rem; font-size: 0.78rem; color: var(--text-sub); font-style: italic; }
+.badge {
+    display: inline-block; padding: 0.05rem 0.45rem; margin-right: 0.35rem;
+    border: 1px solid var(--border); border-radius: 999px;
+    font-size: 0.7rem; color: var(--text-sub); text-transform: uppercase; letter-spacing: 0.03em;
+}
+.admin-actions { white-space: nowrap; }
+.admin-actions .inline-form + .inline-form { margin-left: 0.3rem; }
+.btn-small {
+    background: none; border: 1px solid var(--border); color: var(--text-sub);
+    padding: 0.2rem 0.5rem; border-radius: var(--radius); cursor: pointer; font-size: 0.75rem;
+}
+.btn-small:hover { border-color: var(--primary); color: var(--primary); }

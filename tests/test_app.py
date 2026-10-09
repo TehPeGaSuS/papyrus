@@ -618,3 +618,217 @@ def test_forged_forwarded_for_cannot_reset_a_direct_visitors_limit(client):
 def test_gunicorn_trusts_forwarded_proto_from_the_same_proxies():
     opts = papyrus._server_options('127.0.0.1', 1027, 2)
     assert opts['forwarded_allow_ips'] == '127.0.0.1/32,::1/128'
+
+
+# ── Reports ───────────────────────────────────────────────────────────────────
+
+def report(client, pid, reason='spam', note='', comment='', origin=ORIGIN, headers=None):
+    data = {'reason': reason, 'note': note}
+    if comment:
+        data['comment'] = comment
+    return client.post(f'/{pid}/report', data=data, headers={**origin, **(headers or {})})
+
+
+def report_rows():
+    return db().execute('SELECT * FROM reports ORDER BY rowid').fetchall()
+
+
+def test_reports_exist_only_while_the_admin_panel_is_enabled(client, monkeypatch):
+    pid = create(client, discussions=True)['paste_id']
+    comment(client, pid, 'hello')
+    page = client.get(f'/{pid}').get_data(as_text=True)
+    assert f'href="/{pid}/report"' in page and '/report?comment=' in page      # buttons shown
+    monkeypatch.setitem(bastebin_cfg(), 'admin', {'enabled': False, 'user': 'a', 'pass': 'x'})
+    page = client.get(f'/{pid}').get_data(as_text=True)
+    assert '/report' not in page                                                 # no buttons without an admin
+    assert client.get(f'/{pid}/report').status_code == 404
+    assert report(client, pid).status_code == 404
+
+
+def bastebin_cfg():
+    return papyrus.CFG
+
+
+def test_reports_can_be_switched_off(client, monkeypatch):
+    pid = create(client)['paste_id']
+    monkeypatch.setitem(papyrus._feat, 'reports', False)
+    assert client.get(f'/{pid}/report').status_code == 404
+
+
+def test_report_form_for_a_paste_and_a_comment(client):
+    pid = create(client, title='My <b>paste</b>', discussions=True, content='secret <i>code</i>')['paste_id']
+    cid = comment_id(comment(client, pid, 'a <script>x</script> comment', nick='ann'))
+    page = client.get(f'/{pid}/report')
+    html = page.get_data(as_text=True)
+    assert page.status_code == 200 and 'Report this paste' in html
+    assert 'My &lt;b&gt;paste&lt;/b&gt;' in html and 'secret &lt;i&gt;code&lt;/i&gt;' in html
+    assert 'name="reason" value="spam"' in html and 'name="comment"' not in html
+    html = client.get(f'/{pid}/report?comment={cid}').get_data(as_text=True)
+    assert 'Report this comment' in html and f'name="comment" value="{cid}"' in html
+    assert '&lt;script&gt;' in html and '<script>x' not in html
+
+
+def test_report_form_rejects_unknown_targets(client):
+    p1 = create(client, discussions=True)['paste_id']
+    p2 = create(client, discussions=True)['paste_id']
+    other = comment_id(comment(client, p2, 'elsewhere'))
+    assert client.get(f'/{p1}/report?comment=nope').status_code == 404
+    assert client.get(f'/{p1}/report?comment={other}').status_code == 404      # a comment of another paste
+    assert client.get('/deadbeef0000/report').status_code == 404
+
+
+def test_report_is_stored_and_the_reporter_is_not_identifiable(client):
+    pid = create(client)['paste_id']
+    r = report(client, pid, 'abuse', 'it is\x00 bad ' + 'x' * 600)
+    assert r.status_code == 303 and r.headers['Location'].endswith(f'/{pid}?reported=1')
+    [row] = report_rows()
+    assert (row['paste_id'], row['comment_id'], row['reason']) == (pid, '', 'abuse')
+    assert '\x00' not in row['note'] and len(row['note']) == 500
+    assert '127.0.0.1' not in ' '.join(str(v) for v in tuple(row))             # no address stored
+    assert len(row['reporter']) == 32
+    assert 'Thanks, your report was sent' in client.get(f'/{pid}?reported=1').get_data(as_text=True)
+    assert 'Thanks, your report' not in client.get(f'/{pid}').get_data(as_text=True)
+
+
+def test_comment_reports_are_separate_from_paste_reports(client):
+    pid = create(client, discussions=True)['paste_id']
+    cid = comment_id(comment(client, pid, 'rude'))
+    report(client, pid)
+    report(client, pid, comment=cid, reason='abuse')
+    assert [(r['comment_id'], r['reason']) for r in report_rows()] == [('', 'spam'), (cid, 'abuse')]
+
+
+def test_the_same_visitor_cannot_report_a_target_twice(client):
+    pid = create(client)['paste_id']
+    assert report(client, pid).status_code == 303
+    assert report(client, pid, 'abuse').status_code == 303          # accepted, but not counted again
+    assert len(report_rows()) == 1
+    # a different visitor behind the same proxy counts separately
+    assert report(client, pid, headers={'X-Forwarded-For': '203.0.113.9'}).status_code == 303
+    assert len(report_rows()) == 2
+
+
+def test_report_validation_and_origin_check(client):
+    pid = create(client)['paste_id']
+    assert report(client, pid, reason='nonsense').status_code == 400
+    assert client.post(f'/{pid}/report', data={}, headers=ORIGIN).status_code == 400
+    assert report(client, pid, origin={'Origin': 'http://evil.example'}).status_code == 403
+    assert report(client, pid, origin={}).status_code == 403
+    assert report_rows() == []
+
+
+def test_reports_are_rate_limited_per_visitor(client):
+    pid = create(client)['paste_id']
+    for _ in range(papyrus._REPORT_RATE_LIMIT):
+        assert report(client, pid).status_code == 303
+    assert report(client, pid).status_code == 429
+    # another visitor behind the same proxy is not affected
+    assert report(client, pid, headers={'X-Forwarded-For': '203.0.113.77'}).status_code == 303
+
+
+def test_reporting_a_gone_paste(client):
+    pid = create(client)['paste_id']
+    past = (datetime.datetime.now(UTC) - datetime.timedelta(minutes=1)).isoformat()
+    conn = db()
+    conn.execute('UPDATE pastes SET expires_at=? WHERE id=?', (past, pid))
+    conn.commit()
+    assert report(client, pid).status_code == 410          # the first request finds it expired and removes it
+    assert client.get(f'/{pid}/report').status_code == 404  # after that it is simply gone
+
+
+def test_deleting_or_expiring_a_paste_removes_its_reports(client):
+    made = create(client)
+    keep = create(client)['paste_id']
+    report(client, made['paste_id'])
+    report(client, keep)
+    client.post(f"/api/delete/{made['paste_id']}", json={'token': made['deletion_token']}, headers=ORIGIN)
+    assert [r['paste_id'] for r in report_rows()] == [keep]
+    past = (datetime.datetime.now(UTC) - datetime.timedelta(minutes=1)).isoformat()
+    conn = db()
+    conn.execute('UPDATE pastes SET expires_at=? WHERE id=?', (past, keep))
+    conn.commit()
+    papyrus._purge_expired()
+    assert report_rows() == []
+
+
+def test_admin_sees_the_report_queue(client):
+    pid = create(client, title='<b>Spammy</b> paste', content='buy   <i>cheap</i>\n pills', discussions=True)['paste_id']
+    cid = comment_id(comment(client, pid, 'rude <script>alert(1)</script> words', nick='troll'))
+    report(client, pid, 'spam', 'obvious ad')
+    report(client, pid, 'malware', headers={'X-Forwarded-For': '203.0.113.1'})
+    report(client, pid, 'spam', headers={'X-Forwarded-For': '203.0.113.2'})
+    report(client, pid, comment=cid, reason='abuse', note='<img src=x onerror=alert(1)>')
+    assert client.get('/admin').status_code == 302                    # not logged in
+    login(client)
+    html = client.get('/admin').get_data(as_text=True)
+    assert 'Reports (2)' in html
+    assert html.index('Spammy') < html.index('words')                 # 3 reports outrank 1
+    assert 'Spam or advertising &times;2, Malware or phishing' in html
+    assert 'buy &lt;i&gt;cheap&lt;/i&gt; pills' in html                # whitespace collapsed, HTML escaped
+    assert '&ldquo;obvious ad&rdquo;' in html and 'by troll' in html
+    assert '<script>alert' not in html and '<img src=x' not in html
+    assert f'#c-{cid}' in html and 'Delete comment' in html and 'Dismiss' in html
+    assert 'onsubmit' not in html and 'data-confirm="Delete this paste' in html     # CSP-safe confirmations
+
+
+def test_admin_dashboard_without_reports(client):
+    create(client)
+    login(client)
+    html = client.get('/admin').get_data(as_text=True)
+    assert 'Nothing has been reported.' in html and 'Global Paste Management' in html
+
+
+def test_admin_can_dismiss_reports_for_one_target_only(client):
+    pid = create(client, discussions=True)['paste_id']
+    cid = comment_id(comment(client, pid, 'x'))
+    report(client, pid)
+    report(client, pid, comment=cid)
+    form = {'paste_id': pid, 'comment_id': ''}
+    assert client.post('/admin/reports/dismiss', data=form, headers=ORIGIN).status_code == 403   # not admin
+    login(client)
+    assert client.post('/admin/reports/dismiss', data=form, headers={'Origin': 'http://evil'}).status_code == 403
+    assert client.post('/admin/reports/dismiss', data=form, headers=ORIGIN).status_code == 302
+    assert [r['comment_id'] for r in report_rows()] == [cid]          # the comment report is untouched
+    assert db().execute('SELECT COUNT(*) FROM pastes').fetchone()[0] == 1   # nothing deleted
+
+
+def test_admin_deletes_a_comment_but_keeps_its_replies(client):
+    pid = create(client, discussions=True)['paste_id']
+    a = comment_id(comment(client, pid, 'top'))
+    b = comment_id(comment(client, pid, 'abusive', parent=a))
+    c = comment_id(comment(client, pid, 'innocent reply', parent=b))
+    report(client, pid, comment=b)
+    assert client.post(f'/admin/comments/{b}/delete', headers=ORIGIN).status_code == 403    # not admin
+    login(client)
+    assert client.post(f'/admin/comments/{b}/delete', headers={'Origin': 'http://evil'}).status_code == 403
+    r = client.post(f'/admin/comments/{b}/delete', data={'return': 'paste'}, headers=ORIGIN)
+    assert r.status_code == 302 and r.headers['Location'].endswith(f'/{pid}#discussionsPanel')
+    rows = {x['id']: x['parent_id'] for x in db().execute('SELECT id, parent_id FROM comments')}
+    assert rows == {a: None, c: a}                                    # the reply moved up to a
+    assert report_rows() == []                                        # its reports went with it
+    r = client.post(f'/admin/comments/{c}/delete', headers=ORIGIN)    # default: back to the dashboard
+    assert r.status_code == 302 and r.headers['Location'].endswith('/admin')
+    assert client.post('/admin/comments/missing/delete', headers=ORIGIN).status_code == 302
+
+
+def test_admin_delete_buttons_on_comments_are_for_admins_only(client):
+    pid = create(client, discussions=True)['paste_id']
+    comment(client, pid, 'hello')
+    assert 'comment-delete' not in client.get(f'/{pid}').get_data(as_text=True)
+    login(client)
+    html = client.get(f'/{pid}').get_data(as_text=True)
+    assert 'comment-delete' in html and 'data-confirm="Delete this comment?' in html
+
+
+def test_admin_visits_do_not_inflate_the_view_counter(client):
+    pid = create(client)['paste_id']
+    client.get(f'/{pid}')
+    login(client)
+    client.get(f'/{pid}')
+    client.get(f'/{pid}')
+    assert db().execute('SELECT views FROM pastes WHERE id=?', (pid,)).fetchone()[0] == 1
+
+
+def test_confirmation_handler_is_loaded_on_every_page():
+    js = open(os.path.join(os.path.dirname(papyrus.__file__), 'static', 'js', 'app.js')).read()
+    assert "dataset.confirm" in js and 'preventDefault' in js

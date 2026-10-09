@@ -80,6 +80,7 @@
 
   "features": {
     "show_recent": false,
+    "reports": true,
     "show_view_count": true,
     "allow_raw_api": true,
     "auto_save_draft": true,
