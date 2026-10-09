@@ -669,3 +669,21 @@ a.comment-reply:hover { text-decoration: underline; color: var(--primary); }
     background: var(--surface); border-top: 1px solid var(--border);
 }
 .site-notice a, .site-footer a { color: var(--primary); }
+
+/* ── Markdown pastes: Source | Preview ────────────────────────────────────── */
+.view-switch { display: inline-flex; flex-shrink: 0; border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; }
+.switch-btn { padding: 0.2rem 0.7rem; font-size: 0.78rem; color: var(--text-sub); text-decoration: none; }
+.switch-btn + .switch-btn { border-left: 1px solid var(--border); }
+.switch-btn:hover { background: var(--surface); color: var(--text); }
+.switch-btn.active { background: var(--primary); color: var(--on-primary); }
+.paste-preview { display: none; }
+body.previewing .paste-preview { display: block; }
+body.previewing .view-full, body.previewing .nav-label { display: none; }
+.paste-preview { max-width: 52rem; width: 100%; margin: 0 auto; padding: 1.5rem 1.25rem 2rem; font-size: 0.95rem; line-height: 1.7; }
+.paste-preview h1, .paste-preview h2 { padding-bottom: 0.3rem; border-bottom: 1px solid var(--border); }
+.paste-preview h1 { font-size: 1.7rem; margin: 1.4rem 0 0.8rem; }
+.paste-preview h2 { font-size: 1.35rem; margin: 1.3rem 0 0.7rem; }
+.paste-preview h3 { font-size: 1.12rem; }
+.paste-preview p, .paste-preview ul, .paste-preview ol, .paste-preview pre,
+.paste-preview blockquote, .paste-preview table { margin-bottom: 0.9rem; }
+.paste-preview > :first-child { margin-top: 0; }

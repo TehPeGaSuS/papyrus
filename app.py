@@ -264,9 +264,7 @@ def _md_attribute_filter(tag, attr, value):
         return value if _MD_CODE_CLASS_RE.match(value) else None
     return value
 
-@functools.lru_cache(maxsize=2048)
-def render_markdown(text):
-    """Render untrusted Markdown to sanitised HTML (cached by source text)."""
+def _render_markdown_uncached(text):
     html = _markdown(text)
     return nh3.clean(
         html,
@@ -276,6 +274,19 @@ def render_markdown(text):
         link_rel='noopener noreferrer nofollow',
         attribute_filter=_md_attribute_filter,
     )
+
+_render_markdown_cached = functools.lru_cache(maxsize=1024)(_render_markdown_uncached)
+_MARKDOWN_CACHE_LIMIT = 16 * 1024      # comments, notices and short pastes are cached; big documents are not
+
+def render_markdown(text):
+    """Render untrusted Markdown to sanitised HTML. Short texts are cached by their source, so a
+    thousand of them cost about 16 MB at most; long ones are rendered each time and not kept."""
+    if len(text) <= _MARKDOWN_CACHE_LIMIT:
+        return _render_markdown_cached(text)
+    return _render_markdown_uncached(text)
+
+# Pastes in the Markdown language can be shown rendered, up to this size (same sanitising as comments).
+MAX_PREVIEW_BYTES = 256 * 1024
 
 # ── Jinja helpers ─────────────────────────────────────────────────────────────
 
@@ -952,12 +963,15 @@ def view_paste(paste_id):
         conn.commit()
     content = paste['content']
     lines = content.count('\n') + (0 if content.endswith('\n') else 1)
+    previewable = paste['language'] == 'markdown' and len(content.encode('utf-8')) <= MAX_PREVIEW_BYTES
     cookie = request.cookies.get('removal', '')
     owner = bool(cookie) and len(cookie) < 200 and bool(paste['removal_hash']) \
         and hmac.compare_digest(_hash_token(cookie), paste['removal_hash'])
     return render_template('view.html', paste=paste, comments=_comment_tree(rows),
                            removal_token=cookie if owner else None,
                            comment_count=len(rows), prism_lang=_prism_language(paste['language']),
+                           preview_html=Markup(render_markdown(content)) if previewable else None,
+                           show_preview=previewable and request.args.get('view') == 'preview',
                            line_count=lines, size=_human_size(len(content.encode('utf-8'))))
 
 @app.route('/raw/<string:paste_id>')

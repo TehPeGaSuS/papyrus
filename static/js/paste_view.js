@@ -12,6 +12,7 @@ document.addEventListener('DOMContentLoaded', () => {
     initWordWrap();
     initDiscussions();
     initRemovalLink();
+    initMarkdownPreview();
 });
 
 function pasteMeta() {
@@ -348,4 +349,32 @@ function initDiscussions() {
         form.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
         input.focus();
     }));
+}
+
+// ── Markdown pastes: Source | Preview ─────────────────────────────────────────
+// The links work without JavaScript (?view=preview); this makes the switch instant and keeps the URL
+// shareable. The rendered HTML came sanitised from the server, the same way comments are.
+function initMarkdownPreview() {
+    const source  = document.getElementById('viewSource');
+    const preview = document.getElementById('viewPreview');
+    const article = document.getElementById('mdPreview');
+    if (!source || !preview || !article) return;
+    let highlighted = false;
+
+    function show(mode) {
+        const on = mode === 'preview';
+        document.body.classList.toggle('previewing', on);
+        source.classList.toggle('active', !on);
+        preview.classList.toggle('active', on);
+        source.setAttribute('aria-current', String(!on));
+        preview.setAttribute('aria-current', String(on));
+        if (on && !highlighted && window.Prism) { Prism.highlightAllUnder(article); highlighted = true; }
+        const url = new URL(window.location.href);
+        if (on) url.searchParams.set('view', 'preview'); else url.searchParams.delete('view');
+        url.searchParams.delete('L');           // line highlights belong to the source view
+        history.replaceState(null, '', url.toString());
+    }
+    source.addEventListener('click',  e => { e.preventDefault(); show('source'); });
+    preview.addEventListener('click', e => { e.preventDefault(); show('preview'); });
+    if (document.body.classList.contains('previewing') && window.Prism) { Prism.highlightAllUnder(article); highlighted = true; }
 }

@@ -2,6 +2,7 @@
 
 {% block title %}{{ paste.title }} — {{ cfg.site.name }}{% endblock %}
 {% block main_class %}full-page view-page{% endblock %}
+{% block body_class %}{{ 'previewing' if show_preview }}{% endblock %}
 
 {% block nav_actions %}
 {% set has_description = paste.title and paste.title != 'Untitled' and paste.title != paste.filename %}
@@ -10,6 +11,12 @@
     {% if paste.filename or not has_description %}<span class="file-name">{{ paste.filename or 'untitled' }}</span>{% endif %}
     <span class="file-meta">{{ paste.language }} &middot; {{ line_count }} line{{ '' if line_count == 1 else 's' }} &middot; {{ size }}</span>
 </div>
+{% if preview_html is not none %}
+<div class="view-switch" role="group" aria-label="How to show this paste">
+    <a id="viewSource" class="switch-btn{% if not show_preview %} active{% endif %}" href="{{ url_for('view_paste', paste_id=paste.id) }}" aria-current="{{ 'false' if show_preview else 'true' }}">Source</a>
+    <a id="viewPreview" class="switch-btn{% if show_preview %} active{% endif %}" href="{{ url_for('view_paste', paste_id=paste.id, view='preview') }}" aria-current="{{ 'true' if show_preview else 'false' }}">Preview</a>
+</div>
+{% endif %}
 <label class="nav-label" title="Show line numbers">
     <input type="checkbox" id="lineNoToggle" checked> Show lines
 </label>
@@ -54,6 +61,9 @@
      data-paste-id="{{ paste.id }}" data-title="{{ paste.title }}" data-filename="{{ paste.filename }}" data-language="{{ paste.language }}">
     <pre id="viewPre"{% if prism_lang %} class="language-{{ prism_lang }}"{% endif %}><code id="codeBlock"{% if prism_lang %} class="language-{{ prism_lang }}"{% endif %}>{{ paste.content }}</code></pre>
 </div>
+{% if preview_html is not none %}
+<article id="mdPreview" class="paste-preview markdown-body" aria-label="Rendered Markdown">{{ preview_html }}</article>
+{% endif %}
 {% if paste.discussions_enabled %}
 <div id="discussionsPanel" class="discussions-panel">
     <div class="discussions-header" id="discussionsToggle">

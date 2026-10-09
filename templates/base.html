@@ -33,7 +33,7 @@
     <link rel="apple-touch-icon" href="{{ url_for('static', filename='img/apple-touch-icon.png') }}">
 </head>
 
-<body>
+<body class="{% block body_class %}{% endblock %}">
     <nav class="navbar">
         <div class="nav-content">
             <a href="{{ url_for('index') }}" class="brand"><img src="{{ url_for('static', filename='img/logo-64.png') }}" alt="" width="28" height="28" class="brand-logo">{{ cfg.site.name }}</a>

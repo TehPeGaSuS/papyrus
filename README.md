@@ -13,6 +13,9 @@ SQLite for storage, no build step.
 - **Paste and share**: short links (`/<id>`), raw text at `/raw/<id>`, `curl` uploads, download as a file
 - **Gist-style editor**: description, filename (the extension picks the syntax highlighting), indent mode
   (spaces or tabs), indent size (2, 4, 8), no wrap (the default, like GitHub) or soft wrap, Tab/Shift+Tab indenting and auto-indent
+- **Markdown preview**: Markdown pastes (up to 256 KB) get a Source | Preview switch; `?view=preview` links straight to
+  the rendered version. It is sanitised like comments, so raw HTML is shown as text, never parsed, and HTML pastes are
+  never rendered
 - **Syntax highlighting** with Prism.js, line numbers, line-range links (`?L=5-12`), word wrap toggle
 - **Expiry**: pastes are temporary: 1 hour, 1 day, 1 week or 1 month, one week by default (configurable)
 - **Threaded discussions**: optional per-paste comments and nested replies, each in its own box,
@@ -185,7 +188,7 @@ link is also shown once after saving, for removing the paste from another device
 - `POST /create`: the same from JSON (`content`, optional `title` (the description), `filename`, `language`
   (`auto` or omitted: detected from the filename), `expires_in`, `discussions`; answers with `paste_id`, `url`,
   `removal_token`, `removal_url` and sets the owner cookie) or from a plain-text body (prints like `/curl`)
-- `GET /<id>`: view a paste; `GET /raw/<id>`: its content as `text/plain`
+- `GET /<id>`: view a paste (`?view=preview` for a rendered Markdown paste); `GET /raw/<id>`: its content as `text/plain`
 - `POST /<id>/comment`: add a comment (form fields `content`, optional `nick`, optional `parent`, the
   id of the comment being answered; threads deeper than 6 levels are flattened)
 - `POST /api/preview`: render Markdown for the preview tab

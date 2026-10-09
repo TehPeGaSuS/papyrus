@@ -1572,3 +1572,100 @@ def test_footer_and_notice_can_be_switched_off(client, monkeypatch):
 
 def test_api_config_no_longer_has_the_unused_footer_text(client):
     assert 'footer_text' not in client.get('/api/config').get_json()['site']
+
+
+# ── Markdown pastes: Source | Preview ─────────────────────────────────────────
+
+MD = '# Title\n\nSome **bold** text, a [link](https://example.org) and `code`.\n\n| a | b |\n|---|---|\n| 1 | 2 |\n\n```python\nprint(1)\n```\n'
+
+
+def md_paste(client, content=MD, **extra):
+    return create(client, filename='README.md', content=content, **extra)['paste_id']
+
+
+def test_markdown_pastes_get_a_source_preview_switch(client):
+    html = client.get('/' + md_paste(client)).get_data(as_text=True)
+    assert 'id="viewSource"' in html and 'id="viewPreview"' in html and 'class="view-switch"' in html
+    nav = html.split('</nav>')[0]
+    assert nav.index('class="file-name"') < nav.index('id="viewSource"') < nav.index('id="lineNoToggle"')
+    article = re.search(r'<article id="mdPreview".*?</article>', html, re.S).group(0)
+    assert '<h1>Title</h1>' in article and '<strong>bold</strong>' in article and '<table>' in article
+    assert 'href="https://example.org"' in article and 'class="language-python"' in article
+    assert 'print(1)' in html and '# Title' in html                  # the source is still there
+
+
+def test_source_is_the_default_and_a_link_opens_the_preview(client):
+    pid = md_paste(client)
+    plain = client.get(f'/{pid}').get_data(as_text=True)
+    assert '<body class="">' in plain and re.search(r'id="viewSource"[^>]*>|class="switch-btn active" href="/' + pid + '"', plain)
+    assert 'class="switch-btn active" href="/%s"' % pid in plain
+    shared = client.get(f'/{pid}?view=preview').get_data(as_text=True)
+    assert '<body class="previewing">' in shared                      # rendered on the server: no flash, no JavaScript
+    assert 'class="switch-btn active" href="/%s?view=preview"' % pid in shared
+    assert '<body class="">' in client.get(f'/{pid}?view=bogus').get_data(as_text=True)
+
+
+def test_other_pastes_have_no_preview(client):
+    for content, extra in (('# not markdown', {'filename': 'notes.txt'}), ('<h1>hi</h1>', {'filename': 'page.html'}),
+                           ('x', {})):
+        pid = create(client, content=content, **extra)['paste_id']
+        html = client.get(f'/{pid}?view=preview').get_data(as_text=True)
+        assert 'id="viewPreview"' not in html and 'id="mdPreview"' not in html, extra
+        assert '<body class="">' in html                              # ?view=preview is ignored
+
+
+def test_the_language_menu_choice_counts_too(client):
+    pid = create(client, content='# hi', language='markdown')['paste_id']      # no filename at all
+    assert 'id="mdPreview"' in client.get(f'/{pid}').get_data(as_text=True)
+
+
+def test_hostile_markdown_is_sanitised_in_the_preview(client):
+    evil = ('<script>alert(1)</script>\n\n<img src=x onerror=alert(2)>\n\n[click](javascript:alert(3))\n\n'
+            '![tracker](http://tracker.example/p.png)\n\n<a href="http://evil" onclick="y()">raw</a>\n\n'
+            '<iframe src="http://evil"></iframe>\n\n<style>body{display:none}</style>\n')
+    article = re.search(r'<article id="mdPreview".*?</article>',
+                        client.get('/' + md_paste(client, evil)).get_data(as_text=True), re.S).group(0)
+    # Whatever the Markdown said, only the sanitiser's tags and attributes can be in the page.
+    allowed_tags = papyrus._MD_TAGS | {'article'}
+    for tag, attrs in re.findall(r'<([a-z0-9]+)([^<>]*)>', article):
+        assert tag in allowed_tags, tag
+        names = set(re.findall(r'\s([a-z-]+)=', attrs))
+        assert names <= {'a': {'href', 'rel', 'title'}, 'code': {'class'},
+                         'article': {'id', 'class', 'aria-label'}}.get(tag, set()), (tag, names)
+    assert not [a for a in re.findall(r'<a ([^>]*)>', article) if 'evil' in a]        # no real link to it
+    assert 'href="javascript' not in article.lower()
+    assert '&lt;script&gt;' in article                              # raw HTML is shown as inert text
+    assert 'href="http://tracker.example/p.png"' in article and 'rel="noopener noreferrer nofollow"' in article
+
+
+def test_big_markdown_is_not_previewable(client):
+    big = 'word ' * (papyrus.MAX_PREVIEW_BYTES // 5 + 100)              # just over the limit
+    assert len(big.encode()) > papyrus.MAX_PREVIEW_BYTES
+    html = client.get('/' + md_paste(client, big)).get_data(as_text=True)
+    assert 'id="viewPreview"' not in html and 'id="mdPreview"' not in html
+    ok = 'word ' * (papyrus.MAX_PREVIEW_BYTES // 5 - 100)
+    assert 'id="mdPreview"' in client.get('/' + md_paste(client, ok)).get_data(as_text=True)
+
+
+def test_raw_and_downloads_stay_the_source(client):
+    pid = md_paste(client)
+    assert client.get(f'/raw/{pid}').get_data(as_text=True) == MD
+    assert client.get(f'/raw/{pid}?view=preview').get_data(as_text=True) == MD
+
+
+def test_the_markdown_cache_only_keeps_short_texts():
+    papyrus._render_markdown_cached.cache_clear()
+    papyrus.render_markdown('short **text**')
+    papyrus.render_markdown('x ' * papyrus._MARKDOWN_CACHE_LIMIT)       # a long document
+    info = papyrus._render_markdown_cached.cache_info()
+    assert info.currsize == 1 and info.maxsize == 1024                   # only the short one is kept
+    assert papyrus.render_markdown('short **text**') == '<p>short <strong>text</strong></p>\n'
+    assert papyrus._render_markdown_cached.cache_info().hits == 1
+
+
+def test_preview_markup_is_in_the_script_and_stylesheet():
+    root = os.path.dirname(papyrus.__file__)
+    js = open(os.path.join(root, 'static', 'js', 'paste_view.js'), encoding='utf-8').read()
+    css = open(os.path.join(root, 'static', 'css', 'style.css'), encoding='utf-8').read()
+    assert 'initMarkdownPreview' in js and 'initMarkdownPreview();' in js
+    assert 'body.previewing .view-full' in css and 'body.previewing .nav-label' in css
