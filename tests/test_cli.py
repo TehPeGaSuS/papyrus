@@ -252,3 +252,38 @@ def test_environment_setup_does_not_loop(env_probe, monkeypatch):
     monkeypatch.setenv('PAPYRUS_BOOTSTRAPPED', '1')
     with pytest.raises(SystemExit):
         papyrus.ensure_environment()
+
+
+def test_missing_venv_support_gives_a_helpful_message_and_creates_nothing(env_probe, monkeypatch, tmp_path):
+    calls, venv_python = env_probe
+    os.remove(venv_python)                      # no venv yet
+    monkeypatch.setattr(papyrus, '_venv_support_available', lambda: False)
+    with pytest.raises(SystemExit) as exc:
+        papyrus.ensure_environment()
+    assert 'python3-venv' in str(exc.value) and 'apt install' in str(exc.value)
+    assert calls['pip'] == [] and calls['exec'] == []
+
+
+def test_failed_venv_creation_leaves_no_half_made_venv(env_probe, monkeypatch):
+    import subprocess
+    import venv
+    calls, venv_python = env_probe
+    os.remove(venv_python)
+
+    def broken_create(path, **kw):
+        os.makedirs(os.path.join(path, 'bin'), exist_ok=True)
+        open(os.path.join(path, 'bin', 'python'), 'w').close()   # what a partial venv looks like
+        raise subprocess.CalledProcessError(1, 'ensurepip')
+
+    monkeypatch.setattr(papyrus, '_venv_support_available', lambda: True)
+    monkeypatch.setattr(venv, 'create', broken_create)
+    with pytest.raises(SystemExit) as exc:
+        papyrus.ensure_environment()
+    assert 'python3-venv' in str(exc.value)
+    assert not os.path.exists(papyrus._VENV_DIR)   # so the next run tries again properly
+    assert calls['pip'] == []
+
+
+def test_venv_support_check_reflects_the_interpreter():
+    assert papyrus._venv_support_available() in (True, False)
+    assert 'apt install python3-venv' in papyrus._venv_support_hint()

@@ -19,6 +19,7 @@ import multiprocessing
 import os
 import re
 import secrets
+import shutil
 import signal
 import socket
 import sqlite3
@@ -67,6 +68,19 @@ def _have_dependencies():
     return True
 
 
+def _venv_support_hint():
+    version = f'{sys.version_info.major}.{sys.version_info.minor}'
+    return (f'Python cannot create virtual environments here. On Debian/Ubuntu install it with:\n'
+            f'    sudo apt install python3-venv     (or python{version}-venv)\n'
+            f'Other distributions normally ship venv with Python itself; install their '
+            f'"python3-venv" / "ensurepip" package if they split it out.')
+
+
+def _venv_support_available():
+    import importlib.util
+    return importlib.util.find_spec('venv') is not None and importlib.util.find_spec('ensurepip') is not None
+
+
 def _python_has_dependencies(python):
     probe = 'import flask, gunicorn, mistune, nh3'
     return subprocess.run([python, '-c', probe], capture_output=True).returncode == 0
@@ -82,9 +96,16 @@ def ensure_environment():
     python = sys.executable if in_venv else os.path.join(_VENV_DIR, 'bin', 'python')
     try:
         if not os.path.exists(python):
+            if not _venv_support_available():
+                sys.exit(_venv_support_hint())
             print('Creating .venv ...', flush=True)
             import venv
-            venv.create(_VENV_DIR, with_pip=True)
+            try:
+                venv.create(_VENV_DIR, with_pip=True)
+            except (OSError, subprocess.CalledProcessError) as e:
+                # A half-made venv would look usable on the next run; remove it.
+                shutil.rmtree(_VENV_DIR, ignore_errors=True)
+                sys.exit(f'Could not create .venv ({e}).\n{_venv_support_hint()}')
         if not _python_has_dependencies(python):
             print('Installing Papyrus and its dependencies ...', flush=True)
             subprocess.check_call([python, '-m', 'pip', 'install', '--quiet', '-e', _BASE_DIR])

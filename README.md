@@ -14,6 +14,15 @@ SQLite for storage, no build step.
 - **Admin panel** at `/admin` to list and delete pastes
 - Dark/light theme, auto-saved drafts, keyboard shortcuts, optional recent-pastes page
 
+## Requirements
+
+- Python 3.9 or newer, with `venv` support. Debian and Ubuntu ship it separately:
+  `sudo apt install python3-venv` (most other distributions include it)
+- Internet access on the first run, so pip can download the dependencies
+- `git`, to clone it. Nothing else needs installing system-wide; everything else goes into `.venv`
+- `nh3` (the Markdown sanitiser) ships prebuilt wheels for common platforms; on an unusual
+  architecture pip builds it from source and needs a Rust toolchain
+
 ## Quick start
 
 ```bash
@@ -158,7 +167,7 @@ kept, encrypted ones stay in `pastes_encrypted_legacy`.
 - **Port already in use**: `python3 app.py status`, or pick another with `--port`.
 - **Reset everything**: stop the server and delete `papyrus.db`.
 - **Permission errors**: the app needs write access to its directory (database, `config.json`, log, pid file).
-- **No `python3 -m venv`** (Debian/Ubuntu): `sudo apt install python3-venv`, then run it again.
+- **"Python cannot create virtual environments"** (Debian/Ubuntu): `sudo apt install python3-venv`, then run `python3 app.py` again.
 
 ## License
 
