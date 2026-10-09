@@ -1,0 +1,138 @@
+{
+  "_comment": "Papyrus configuration. Optional: Papyrus uses config.json when it exists (python3 app.py creates one with a random secret_key) and these defaults otherwise. Set the admin password with `python3 app.py admin`. Restart after changing values.",
+
+  "site": {
+    "name": "Papyrus",
+    "tagline": "Simple, fast pastes with Markdown discussions.",
+    "brand_icon": "📋",
+    "footer_text": "Simple, fast, and reliable.",
+    "base_url": ""
+  },
+
+  "server": {
+    "host": "127.0.0.1",
+    "port": 5500,
+    "debug": false,
+    "secret_key": "change-this-to-a-long-random-secret"
+  },
+
+  "database": {
+    "path": "papyrus.db"
+  },
+
+  "pastes": {
+    "max_size_bytes": 2097152,
+    "id_length": 12,
+    "recent_limit": 50,
+    "default_language": "text",
+    "default_expiry": "1year",
+    "allow_expiry_options": ["1hour", "1day", "1week", "1month", "1year"],
+    "expiry_labels": {
+      "1hour":  "1 Hour",
+      "1day":   "1 Day",
+      "1week":  "1 Week",
+      "1month": "1 Month",
+      "1year":  "1 Year"
+    }
+  },
+
+  "theme": {
+    "default": "auto",
+    "allow_user_toggle": true,
+    "light": {
+      "primary":          "#2563eb",
+      "primary_hover":    "#1d4ed8",
+      "success":          "#059669",
+      "danger":           "#dc2626",
+      "warning":          "#d97706",
+      "background":       "#ffffff",
+      "surface":          "#f8fafc",
+      "card":             "#ffffff",
+      "border":           "#e2e8f0",
+      "text_primary":     "#1e293b",
+      "text_secondary":   "#64748b",
+      "text_muted":       "#94a3b8",
+      "navbar_bg":        "#ffffff",
+      "navbar_border":    "#e2e8f0",
+      "code_bg":          "#f8fafc",
+      "code_border":      "#e2e8f0",
+      "prism_theme":      "prism"
+    },
+    "dark": {
+      "primary":          "#3b82f6",
+      "primary_hover":    "#2563eb",
+      "success":          "#10b981",
+      "danger":           "#ef4444",
+      "warning":          "#f59e0b",
+      "background":       "#0f172a",
+      "surface":          "#1e293b",
+      "card":             "#1e293b",
+      "border":           "#334155",
+      "text_primary":     "#f1f5f9",
+      "text_secondary":   "#cbd5e1",
+      "text_muted":       "#64748b",
+      "navbar_bg":        "#1e293b",
+      "navbar_border":    "#334155",
+      "code_bg":          "#0f172a",
+      "code_border":      "#334155",
+      "prism_theme":      "prism-tomorrow"
+    }
+  },
+
+  "features": {
+    "show_recent": false,
+    "show_view_count": true,
+    "allow_raw_api": true,
+    "auto_save_draft": true,
+    "draft_max_age_days": 7,
+    "keyboard_shortcuts": true
+  },
+
+  "ui": {
+    "code_font_family": "'JetBrains Mono', 'Fira Code', 'Consolas', monospace",
+    "code_font_size": "0.875rem",
+    "code_line_height": "1.6",
+    "textarea_rows": 20,
+    "border_radius": "8px",
+    "border_radius_sm": "4px",
+    "border_radius_lg": "12px",
+    "animation_speed": "0.2s"
+  },
+
+  "languages": [
+    {"value": "text",       "name": "Plain Text"},
+    {"value": "javascript", "name": "JavaScript"},
+    {"value": "typescript", "name": "TypeScript"},
+    {"value": "python",     "name": "Python"},
+    {"value": "java",       "name": "Java"},
+    {"value": "c",          "name": "C"},
+    {"value": "cpp",        "name": "C++"},
+    {"value": "csharp",     "name": "C#"},
+    {"value": "html",       "name": "HTML"},
+    {"value": "css",        "name": "CSS"},
+    {"value": "scss",       "name": "SCSS"},
+    {"value": "sql",        "name": "SQL"},
+    {"value": "json",       "name": "JSON"},
+    {"value": "yaml",       "name": "YAML"},
+    {"value": "xml",        "name": "XML"},
+    {"value": "bash",       "name": "Bash"},
+    {"value": "powershell", "name": "PowerShell"},
+    {"value": "php",        "name": "PHP"},
+    {"value": "ruby",       "name": "Ruby"},
+    {"value": "go",         "name": "Go"},
+    {"value": "rust",       "name": "Rust"},
+    {"value": "swift",      "name": "Swift"},
+    {"value": "kotlin",     "name": "Kotlin"},
+    {"value": "markdown",   "name": "Markdown"},
+    {"value": "diff",       "name": "Diff / Patch"},
+    {"value": "docker",     "name": "Dockerfile"},
+    {"value": "nginx",      "name": "Nginx Config"},
+    {"value": "toml",       "name": "TOML"},
+    {"value": "ini",        "name": "INI / Config"}
+  ],
+  "admin": {
+    "enabled": false,
+    "user": "admin",
+    "pass": ""
+  }
+}

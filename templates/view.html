@@ -1,0 +1,84 @@
+{% extends "base.html" %}
+
+{% block title %}{{ paste.title }} — {{ cfg.site.name }}{% endblock %}
+{% block main_class %}full-page view-page{% endblock %}
+
+{% block nav_actions %}
+<span id="navPasteTitle" class="nav-paste-title">{{ paste.title }}</span>
+<label class="nav-label" title="Toggle line numbers">
+    <input type="checkbox" id="lineNoToggle" checked> Lines
+</label>
+<label class="nav-label" title="Toggle word wrap">
+    <input type="checkbox" id="wrapToggle" checked> Wrap
+</label>
+<a id="rawBtn" class="nav-btn" href="{{ url_for('view_paste_raw', paste_id=paste.id) }}" target="_blank" rel="noopener">Raw</a>
+<button id="copyBtn" class="nav-btn">Copy</button>
+<button id="downloadBtn" class="nav-btn">Download</button>
+<button id="deleteBtn" class="nav-btn nav-btn-danger" style="display:none">Delete</button>
+<a href="{{ url_for('index') }}" class="nav-btn nav-btn-save">New</a>
+{% if cfg.theme.allow_user_toggle %}
+<button id="themeToggle" class="theme-toggle">🌙</button>
+{% endif %}
+{% endblock %}
+
+{% macro comment_box(c) %}
+<div class="comment-item" id="c-{{ c.id }}">
+    <div class="comment-box">
+        <div class="comment-meta{% if c.nick %} has-nick{% endif %}">
+            {% if c.nick %}{{ c.nick }} &middot; {% endif %}<time class="comment-time" datetime="{{ c.created_at|utc_iso }}">{{ c.created_at }} UTC</time>
+            <button type="button" class="comment-reply" data-id="{{ c.id }}" data-nick="{{ c.nick or 'anonymous' }}">Reply</button>
+        </div>
+        <div class="comment-content markdown-body">{{ c.content|markdown }}</div>
+    </div>
+    <div class="comment-replies">
+        {% for reply in c.children %}{{ comment_box(reply) }}{% endfor %}
+    </div>
+</div>
+{% endmacro %}
+
+{% block content %}
+<div class="view-full wrap-lines" id="viewFull"
+     data-paste-id="{{ paste.id }}" data-title="{{ paste.title }}" data-language="{{ paste.language }}">
+    <pre id="viewPre"{% if prism_lang %} class="language-{{ prism_lang }}"{% endif %}><code id="codeBlock"{% if prism_lang %} class="language-{{ prism_lang }}"{% endif %}>{{ paste.content }}</code></pre>
+</div>
+{% if paste.discussions_enabled %}
+<div id="discussionsPanel" class="discussions-panel">
+    <div class="discussions-header" id="discussionsToggle">
+        <span class="discussions-title">&#x1F4AC; Discussions (<span id="discussionsCount">{{ comment_count }}</span>)</span>
+        <span class="discussions-chevron" id="discussionsChevron">&#x25BC;</span>
+    </div>
+    <div class="discussions-body">
+        <div id="commentsList" class="comments-list">
+            {% for c in comments %}{{ comment_box(c) }}
+            {% else %}
+            <div class="comments-empty">No comments yet. Be the first!</div>
+            {% endfor %}
+        </div>
+        <div id="commentFormHome">
+        <form class="comment-form-wrap" id="commentForm" method="post" action="{{ url_for('post_comment', paste_id=paste.id) }}">
+            <input type="hidden" name="parent" id="commentParent" value="">
+            <div class="comment-form-fields">
+                <div class="reply-bar" id="replyBar" hidden>
+                    Replying to <strong id="replyTo"></strong>
+                    <button type="button" id="replyCancel" class="comment-reply">Cancel</button>
+                </div>
+                <input type="text" id="commentNick" name="nick" class="comment-nick" placeholder="Nickname (optional)" maxlength="32" autocomplete="off">
+                <div class="comment-tabs" role="tablist">
+                    <button type="button" class="comment-tab active" data-tab="write">Write</button>
+                    <button type="button" class="comment-tab" data-tab="preview">Preview</button>
+                    <span class="comment-hint">Markdown supported</span>
+                </div>
+                <textarea id="commentInput" name="content" class="comment-input" placeholder="Add a comment&#x2026; (Ctrl+Enter to post)" rows="3" maxlength="10240" required></textarea>
+                <div id="commentPreview" class="comment-content markdown-body comment-preview" style="display:none"></div>
+            </div>
+            <button type="submit" id="commentSubmit" class="nav-btn nav-btn-save">Post</button>
+        </form>
+        </div>
+    </div>
+</div>
+{% endif %}
+{% endblock %}
+
+{% block scripts %}
+<script src="{{ url_for('static', filename='js/paste_view.js') }}" nonce="{{ csp_nonce }}"></script>
+{% endblock %}

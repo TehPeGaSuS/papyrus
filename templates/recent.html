@@ -1,0 +1,66 @@
+{% extends "base.html" %}
+
+{% block title %}Recent Pastes — {{ cfg.site.name }}{% endblock %}
+
+{% block content %}
+<div class="recent-pastes">
+    <div class="page-header">
+        <h1>Recent Pastes</h1>
+        <p>Browse recently created public pastes</p>
+    </div>
+
+    {% if pastes %}
+    <div class="pastes-grid">
+        {% for paste in pastes %}
+        <div class="paste-card">
+            <div class="paste-card-header">
+                <h3 class="paste-title">
+                    <a href="{{ url_for('view_paste', paste_id=paste.id) }}">{{ paste.title }}</a>
+                </h3>
+                <span class="language-badge">{{ paste.language }}</span>
+            </div>
+
+            <div class="paste-card-meta">
+                <span class="meta-item">
+                    <strong>ID:</strong> {{ paste.id }}
+                </span>
+                <span class="meta-item">
+                    <strong>Created:</strong> 
+                    <time datetime="{{ paste.created_at }}" class="relative-time">{{ paste.created_at }}</time>
+                </span>
+                <span class="meta-item">
+                    <strong>Views:</strong> {{ paste.views }}
+                </span>
+            </div>
+            
+            <div class="paste-card-actions">
+                <a href="{{ url_for('view_paste', paste_id=paste.id) }}" class="btn btn-primary btn-sm">View</a>
+            </div>
+        </div>
+        {% endfor %}
+    </div>
+    {% else %}
+    <div class="empty-state">
+        <div class="empty-icon">📝</div>
+        <h3>No recent pastes</h3>
+        <p>Be the first to create a paste!</p>
+        <a href="{{ url_for('index') }}" class="btn btn-primary">Create New Paste</a>
+    </div>
+    {% endif %}
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+// Format relative timestamps
+document.addEventListener('DOMContentLoaded', function() {
+    document.querySelectorAll('.relative-time').forEach(timeEl => {
+        const datetime = timeEl.getAttribute('datetime');
+        if (datetime && window.formatDateTime) {
+            timeEl.textContent = window.formatDateTime(datetime);
+        }
+    });
+});
+
+</script>
+{% endblock %}

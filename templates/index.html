@@ -1,0 +1,39 @@
+{% extends "base.html" %}
+
+{% block title %}{{ cfg.site.name }}{% endblock %}
+{% block main_class %}full-page{% endblock %}
+
+{% block nav_actions %}
+<input type="text" id="title" placeholder="Title (optional)" class="nav-input" maxlength="100" autocomplete="off">
+<select id="language" class="nav-select"></select>
+<select id="expires_in" class="nav-select">
+    {% for opt in cfg.pastes.allow_expiry_options %}
+    <option value="{{ opt }}" {% if opt == cfg.pastes.default_expiry %}selected{% endif %}>
+        {{ cfg.pastes.expiry_labels.get(opt, opt) }}
+    </option>
+    {% endfor %}
+</select>
+<button id="clearBtn" class="nav-btn">Clear</button>
+<label class="nav-label" title="Allow discussions on this paste">
+    <input type="checkbox" id="allowDiscussions"> Discuss
+</label>
+<button id="submitBtn" class="nav-btn nav-btn-save">Save</button>
+{% if cfg.theme.allow_user_toggle %}
+<button id="themeToggle" class="theme-toggle">🌙</button>
+{% endif %}
+{% endblock %}
+
+{% block content %}
+<textarea
+    id="content"
+    class="full-editor"
+    placeholder="Paste your code or text here…"
+    spellcheck="false"
+    autocomplete="off"
+    autocorrect="off"
+    autocapitalize="off"></textarea>
+{% endblock %}
+
+{% block scripts %}
+<script src="{{ url_for('static', filename='js/paste_create.js') }}" nonce="{{ csp_nonce }}"></script>
+{% endblock %}

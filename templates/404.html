@@ -1,0 +1,17 @@
+{% extends "base.html" %}
+
+{% block title %}Not Found - {{ cfg.site.name }}{% endblock %}
+
+{% block content %}
+<div class="error-page">
+    <div class="error-content">
+        <div class="error-icon">🔍</div>
+        <h1>404 - Paste Not Found</h1>
+        <p>The paste you're looking for doesn't exist or has been removed.</p>
+        
+        <div class="error-actions">
+            <a href="{{ url_for('index') }}" class="btn btn-primary">Create New Paste</a>
+        </div>
+    </div>
+</div>
+{% endblock %}
