@@ -1304,3 +1304,193 @@ def test_a_description_shows_in_front_of_the_filename_only_when_there_is_one(cli
     assert '<span class="file-name">untitled</span>' in nav and 'paste-description' not in nav
     nav = nav_of(client.get('/' + create(client, title='deploy.sh', filename='deploy.sh')['paste_id']).get_data(as_text=True))
     assert 'paste-description' not in nav                         # a description equal to the filename isn't repeated
+
+
+# ── Colour themes: palettes from the config, a dropdown, sober icons ──────────
+
+def palette(**overrides):
+    colours = dict(primary='#c2410c', primary_hover='#9a3412', on_primary='#ffffff', background='#ffffff',
+                   surface='#f6f6f7', border='#e4e4e7', text='#18181b', text_secondary='#52525b',
+                   text_muted='#a1a1aa', danger='#b91c1c')
+    spec = {'label': 'Test', 'light': dict(colours), 'dark': dict(colours, background='#111113')}
+    spec.update(overrides)
+    return spec
+
+
+def theme_cfg(**palettes):
+    return {'palettes': palettes or {'one': palette()}}
+
+
+def test_palettes_load_in_order_with_a_default():
+    palettes, default = papyrus._load_palettes({'palettes': {'b': palette(label='Bee'), 'a': palette()}, 'palette': 'a'})
+    assert [p['value'] for p in palettes] == ['b', 'a'] and default == 'a'
+    assert palettes[0]['label'] == 'Bee' and palettes[1]['logo_filter'] == 'none'
+    assert papyrus._load_palettes({'palettes': {'b': palette(), 'a': palette()}})[1] == 'b'     # first is the default
+
+
+def test_the_label_defaults_to_the_name():
+    spec = palette()
+    del spec['label']
+    assert papyrus._load_palettes({'palettes': {'solo': spec}})[0][0]['label'] == 'solo'
+
+
+def test_short_hex_colours_are_fine():
+    spec = palette()
+    spec['light']['text'] = '#111'
+    assert papyrus._load_palettes({'palettes': {'x': spec}})[0][0]['light']['text'] == '#111'
+
+
+def broken(mutate):
+    spec = palette()
+    mutate(spec)
+    return {'palettes': {'x': spec}}
+
+
+@pytest.mark.parametrize('cfg,message', [
+    ({}, 'at least one palette'),
+    ({'palettes': {}}, 'at least one palette'),
+    ({'palettes': []}, 'at least one palette'),
+    ({'palettes': {'Bad Name': palette()}}, 'lowercase'),
+    ({'palettes': {'x': 'blue'}}, 'must be a map'),
+    (broken(lambda s: s.pop('dark')), 'needs a "dark"'),
+    (broken(lambda s: s.__setitem__('light', 'red')), 'needs a "light"'),
+    (broken(lambda s: s['light'].pop('primary')), 'missing primary'),
+    (broken(lambda s: s['dark'].pop('danger')), 'dark: missing danger'),
+    (broken(lambda s: s['light'].__setitem__('primary', 'red')), "must be a hex colour"),
+    (broken(lambda s: s['light'].__setitem__('primary', '#12345')), "must be a hex colour"),
+    (broken(lambda s: s['light'].__setitem__('primary', 'red; } body { display: none')), "must be a hex colour"),
+    (broken(lambda s: s['light'].__setitem__('text', 12)), "must be a hex colour"),
+    (broken(lambda s: s.__setitem__('logo_filter', 'none; } body { x: y')), 'logo_filter'),
+    (broken(lambda s: s.__setitem__('logo_filter', 'url(http://evil/x.svg)')), 'logo_filter'),
+    ({'palettes': {'x': palette()}, 'palette': 'nope'}, 'is not one of'),
+])
+def test_broken_palettes_fail_at_startup(cfg, message):
+    with pytest.raises(RuntimeError) as exc:
+        papyrus._load_palettes(cfg)
+    assert message in str(exc.value)
+
+
+def test_the_generated_stylesheet_covers_every_palette_and_mode():
+    palettes, _ = papyrus._load_palettes({'palettes': {'one': palette(logo_filter='hue-rotate(90deg)'),
+                                                      'two': palette(label='Two')}})
+    css = papyrus._build_theme_css(palettes)
+    for name in ('one', 'two'):
+        assert f'[data-palette="{name}"] {{' in css and f'[data-palette="{name}"][data-theme="dark"] {{' in css
+    assert css.count('{') == css.count('}') == 4
+    assert '--logo-filter: hue-rotate(90deg);' in css and '--logo-filter: none;' in css
+    assert 'color-scheme: light;' in css and 'color-scheme: dark;' in css
+    light, dark = css.split('[data-theme="dark"]')[0], css.split('[data-theme="dark"]')[1]
+    assert '--code-bg: #f6f6f7;' in light and '--nav-bg: #ffffff;' in light     # light: code on the surface colour
+    assert '--code-bg: #111113;' in dark and '--nav-bg: #f6f6f7;' in dark       # dark: code on the background
+
+
+def test_theme_css_is_served_and_cacheable(client):
+    r = client.get('/theme.css')
+    assert r.status_code == 200 and r.mimetype == 'text/css'
+    assert 'max-age' in r.headers['Cache-Control'] and r.get_data(as_text=True) == papyrus._THEME_CSS
+    page = client.get('/').get_data(as_text=True)
+    assert f'/theme.css?v={papyrus._THEME_CSS_VERSION}' in page
+    assert page.index('/theme.css?') < page.index('css/style.css')           # the theme comes first
+    other, _ = papyrus._load_palettes({'palettes': {'x': palette(primary='#000000')}})
+    assert hashlib_sha(papyrus._build_theme_css(other)) != papyrus._THEME_CSS_VERSION   # a change busts the cache
+
+
+def hashlib_sha(text):
+    import hashlib
+    return hashlib.sha256(text.encode()).hexdigest()[:10]
+
+
+def test_pages_start_in_the_default_palette_and_remember_a_choice_before_painting(client):
+    html = client.get('/').get_data(as_text=True)
+    assert '<html lang="en" data-palette="rust">' in html
+    head = html.split('</head>')[0]
+    assert "localStorage.getItem('palette')" in head and 'setAttribute(\'data-palette\', p)' in head
+    names = re.search(r'(\[[^\]]*\])\.indexOf\(p\)', head).group(1)
+    assert json.loads(names) == ['rust', 'parchment', 'green', 'violet', 'mono']      # only configured names are accepted
+
+
+def test_the_dropdown_sits_next_to_the_toggle_on_every_page(client):
+    pid = create(client, discussions=True)['paste_id']
+    tok = create(client)['removal_token']
+    for path in ('/', f'/{pid}', f'/{pid}/report', f'/remove/{tok}'):
+        html = client.get(path).get_data(as_text=True)
+        nav = html.split('</nav>')[0]
+        assert nav.index('id="paletteSelect"') < nav.index('id="themeToggle"'), path
+        menu = re.search(r'<select id="paletteSelect".*?</select>', nav, re.S).group(0)
+        assert re.findall(r'<option value="([^"]+)"', menu) == ['rust', 'parchment', 'green', 'violet', 'mono']
+        assert re.findall(r'>([^<]+)</option>', menu) == ['Rust', 'Parchment', 'Green', 'Violet', 'Mono']
+        assert re.search(r'<option value="rust" selected>', menu)
+    gone = client.post(f'/remove/{tok}')
+    assert 'id="paletteSelect"' in gone.get_data(as_text=True)
+
+
+def test_one_palette_means_no_dropdown(client, monkeypatch):
+    only, default = papyrus._load_palettes({'palettes': {'solo': palette()}})
+    monkeypatch.setattr(papyrus, '_PALETTES', only)
+    monkeypatch.setattr(papyrus, '_DEFAULT_PALETTE', default)
+    html = client.get('/').get_data(as_text=True)
+    assert 'id="paletteSelect"' not in html and 'id="themeToggle"' in html and 'data-palette="solo"' in html
+
+
+def test_the_light_dark_toggle_can_be_turned_off_without_losing_the_dropdown(client, monkeypatch):
+    monkeypatch.setitem(papyrus._theme, 'allow_user_toggle', False)
+    html = client.get('/').get_data(as_text=True)
+    assert 'id="themeToggle"' not in html and 'id="paletteSelect"' in html
+
+
+def test_the_toggle_uses_plain_line_icons_not_emoji(client):
+    html = client.get('/').get_data(as_text=True)
+    button = re.search(r'<button id="themeToggle".*?</button>', html, re.S).group(0)
+    assert 'class="icon-moon"' in button and 'class="icon-sun"' in button and button.count('<svg') == 2
+    root = os.path.dirname(papyrus.__file__)
+    for folder, ext in (('templates', '.html'), ('static/js', '.js'), ('static/css', '.css')):
+        for name in os.listdir(os.path.join(root, folder)):
+            if name.endswith(ext):
+                text = open(os.path.join(root, folder, name), encoding='utf-8').read()
+                assert '\U0001F319' not in text and '\u2600' not in text, name         # no moon or sun emoji
+
+
+def test_colours_are_defined_in_one_place():
+    root = os.path.dirname(papyrus.__file__)
+    css = open(os.path.join(root, 'static', 'css', 'style.css'), encoding='utf-8').read()
+    js = open(os.path.join(root, 'static', 'js', 'app.js'), encoding='utf-8').read()
+    assert not re.search(r'--(primary|bg|surface|border|text|danger)\s*:', css)     # only /theme.css defines them
+    assert 'setProperty' not in js.replace('--radius', '') or "'--radius'" in js      # no colours pushed in from JS
+    assert '_CSS_VAR_MAP' not in js and 'applyConfigCssVars' not in js and 'initPalette' in js
+
+
+def test_api_config_lists_the_palettes_not_their_colours(client):
+    theme = client.get('/api/config').get_json()['theme']
+    assert theme['palette'] == 'rust' and [p['value'] for p in theme['palettes']] == ['rust', 'parchment', 'green', 'violet', 'mono']
+    assert 'light' not in theme and 'dark' not in theme and '#' not in json.dumps(theme)
+
+
+def test_the_shipped_palettes_are_complete_and_readable():
+    cfg = json.load(open(os.path.join(os.path.dirname(papyrus.__file__), 'config.example.json')))['theme']
+    palettes, default = papyrus._load_palettes(cfg)
+    assert default == 'rust' and palettes[0]['value'] == 'rust' and palettes[0]['logo_filter'] == 'none'
+    def luminance(hex_colour):
+        h = hex_colour.lstrip('#')
+        h = ''.join(c * 2 for c in h) if len(h) == 3 else h
+        channel = lambda v: (v / 255 / 12.92) if v / 255 <= 0.03928 else (((v / 255) + 0.055) / 1.055) ** 2.4
+        r, g, b = (channel(int(h[i:i + 2], 16)) for i in (0, 2, 4))
+        return 0.2126 * r + 0.7152 * g + 0.0722 * b
+    def contrast(a, b):
+        la, lb = sorted((luminance(a), luminance(b)), reverse=True)
+        return (la + 0.05) / (lb + 0.05)
+    for pal in palettes:
+        for mode in ('light', 'dark'):
+            c = pal[mode]
+            assert contrast(c['text'], c['background']) >= 7, (pal['value'], mode, 'body text')
+            assert contrast(c['text_secondary'], c['background']) >= 4.5, (pal['value'], mode, 'secondary text')
+            assert contrast(c['primary'], c['background']) >= 3, (pal['value'], mode, 'accent on background')
+            assert contrast(c['on_primary'], c['primary']) >= 4.5, (pal['value'], mode, 'text on the accent')
+
+
+def test_every_function_app_js_calls_is_defined():
+    """A cleanup once deleted a still-used helper; unit tests can't run the script, so check the names."""
+    js = open(os.path.join(os.path.dirname(papyrus.__file__), 'static', 'js', 'app.js'), encoding='utf-8').read()
+    for name in ('initialiseTheme', 'applyUiVars', 'applyTheme', 'swapPrismTheme', 'updateThemeToggle',
+                 'initPalette', 'toggleTheme', 'copyToClipboard'):
+        if re.search(rf'\b{name}\(', js):
+            assert re.search(rf'function\s+{name}\b|{name}\s*=\s*(async\s*)?(function|\()', js), f'{name} is called but not defined'

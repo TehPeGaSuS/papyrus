@@ -4,9 +4,7 @@
 
 {% block nav_actions %}
 <a href="{{ url_for('view_paste', paste_id=paste.id) }}{% if comment %}#c-{{ comment.id }}{% endif %}" class="nav-btn">Back</a>
-{% if cfg.theme.allow_user_toggle %}
-<button id="themeToggle" class="theme-toggle">🌙</button>
-{% endif %}
+{% include "_theme_controls.html" %}
 {% endblock %}
 
 {% block content %}

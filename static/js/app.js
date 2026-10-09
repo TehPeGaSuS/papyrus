@@ -1,21 +1,6 @@
 // ── Config ─────────────────────────────────────────────────────────────────
 window.PBCFG = null;
 
-// Map config theme keys → CSS custom property names used in style.css
-const _CSS_VAR_MAP = {
-    primary:        '--primary',
-    primary_hover:  '--primary-h',
-    danger:         '--danger',
-    background:     '--bg',
-    surface:        '--surface',
-    border:         '--border',
-    text_primary:   '--text',
-    text_secondary: '--text-sub',
-    text_muted:     '--text-muted',
-    code_bg:        '--code-bg',
-    navbar_bg:      '--nav-bg',
-    navbar_border:  '--nav-border',
-};
 
 // Map config ui keys → CSS custom property names
 const _UI_VAR_MAP = {
@@ -28,6 +13,8 @@ document.addEventListener('DOMContentLoaded', () => {
     try { localStorage.removeItem('paste_draft'); } catch (e) { /* storage unavailable */ }
 
     // 1. Initialise DOM-dependent listeners IMMEDIATELY
+    initPalette();
+
     const toggleBtn = document.getElementById('themeToggle');
     if (toggleBtn) {
         toggleBtn.addEventListener('click', toggleTheme);
@@ -83,23 +70,9 @@ function initialiseTheme() {
 
 function applyTheme(theme) {
     document.documentElement.setAttribute('data-theme', theme);
-    applyConfigCssVars(theme);
     swapPrismTheme(theme);
     updateThemeToggle(theme);
 }
-
-function applyConfigCssVars(theme) {
-    const cfg = window.PBCFG?.theme;
-    if (!cfg) return;
-    const palette = cfg[theme] || {};
-    const root    = document.documentElement;
-    for (const [key, cssVar] of Object.entries(_CSS_VAR_MAP)) {
-        if (palette[key] !== undefined) {
-            root.style.setProperty(cssVar, palette[key]);
-        }
-    }
-}
-
 function applyUiVars() {
     const ui = window.PBCFG?.ui;
     if (!ui) return;
@@ -136,8 +109,20 @@ window.toggleTheme = function () {
 function updateThemeToggle(theme) {
     const btn = document.querySelector('.theme-toggle');
     if (!btn) return;
-    btn.textContent = theme === 'light' ? '🌙' : '☀️';
-    btn.title = `Switch to ${theme === 'light' ? 'dark' : 'light'} mode`;
+    const label = `Switch to ${theme === 'light' ? 'dark' : 'light'} mode`;   // the icon itself is CSS
+    btn.title = label;
+    btn.setAttribute('aria-label', label);
+}
+
+// Colour theme dropdown. The head script has already applied a saved choice, before first paint.
+function initPalette() {
+    const select = document.getElementById('paletteSelect');
+    if (!select) return;
+    select.value = document.documentElement.getAttribute('data-palette');
+    select.addEventListener('change', () => {
+        document.documentElement.setAttribute('data-palette', select.value);
+        try { localStorage.setItem('palette', select.value); } catch (e) { /* private mode: lasts for this page */ }
+    });
 }
 
 // ── Clipboard ───────────────────────────────────────────────────────────────

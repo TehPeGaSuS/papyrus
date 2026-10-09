@@ -67,10 +67,36 @@ no `config.json`. Restart after changing it.
 - `server.secret_key`: signs the admin session. The `SECRET_KEY` environment variable overrides it
 - `pastes.expiries`: the expiry choices, see below. `pastes.default_expiry` names the one selected by default
 - `pastes.*`: also the size limit, the default language and `recent_limit`
+- `theme.palettes`, `theme.palette`: the colour themes visitors can pick from the dropdown next to the light/dark
+  toggle, and the default one (rust). See below
 - `features.show_recent`: enable the `/recent` page
 - `features.reports`: allow reporting (default `true`; also needs the admin panel, since someone has to read them)
 - `admin.*`: managed by `python3 app.py admin`
 - `database.path`: SQLite file, relative to the project directory (default `papyrus.db`)
+
+### Colour themes
+
+`theme.palettes` holds the themes offered in the dropdown (Rust, Parchment, Green, Violet and Mono are included);
+`theme.palette` names the default. The server turns them into one stylesheet, so there is no flash of other
+colours, and each visitor's choice is remembered in their browser. Every palette has a `light` and a `dark`
+variant with the same ten colours; add your own by copying one:
+
+```json
+"palettes": {
+  "sea": {
+    "label": "Sea",
+    "logo_filter": "hue-rotate(160deg)",
+    "light": { "primary": "#0e7490", "primary_hover": "#155e75", "on_primary": "#ffffff", "background": "#ffffff",
+               "surface": "#f6f6f7", "border": "#e4e4e7", "text": "#18181b", "text_secondary": "#52525b",
+               "text_muted": "#a1a1aa", "danger": "#b91c1c" },
+    "dark":  { "...": "same ten keys" }
+  }
+}
+```
+
+`logo_filter` (optional) is a CSS filter that recolours the logo, which ships in the default palette's colour.
+Colours are hex values; a mistake stops Papyrus at startup with a message saying which one. With a single
+palette the dropdown is hidden, and `theme.allow_user_toggle` switches the light/dark toggle off.
 
 ### Expiry times
 

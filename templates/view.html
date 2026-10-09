@@ -22,9 +22,7 @@
 {% if removal_token %}<a href="{{ url_for('remove_paste', token=removal_token) }}" class="nav-btn nav-btn-danger" title="You created this paste">Remove now</a>{% endif %}
 {% if reports_enabled %}<a href="{{ url_for('report', paste_id=paste.id) }}" class="nav-btn" title="Report this paste to the administrator">Report</a>{% endif %}
 <a href="{{ url_for('index') }}" class="nav-btn nav-btn-save">New</a>
-{% if cfg.theme.allow_user_toggle %}
-<button id="themeToggle" class="theme-toggle">🌙</button>
-{% endif %}
+{% include "_theme_controls.html" %}
 {% endblock %}
 
 {% macro comment_box(c) %}

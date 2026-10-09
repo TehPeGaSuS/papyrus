@@ -4,9 +4,7 @@
 
 {% block nav_actions %}
 <a href="{{ url_for('index') }}" class="nav-btn nav-btn-save">New</a>
-{% if cfg.theme.allow_user_toggle %}
-<button id="themeToggle" class="theme-toggle">🌙</button>
-{% endif %}
+{% include "_theme_controls.html" %}
 {% endblock %}
 
 {% block content %}

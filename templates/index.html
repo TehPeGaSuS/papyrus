@@ -5,9 +5,7 @@
 
 {% block nav_actions %}
 <input type="text" id="title" class="nav-description" placeholder="Description (optional)" maxlength="100" autocomplete="off" aria-label="Description">
-{% if cfg.theme.allow_user_toggle %}
-<button id="themeToggle" class="theme-toggle">🌙</button>
-{% endif %}
+{% include "_theme_controls.html" %}
 {% endblock %}
 
 {% block content %}

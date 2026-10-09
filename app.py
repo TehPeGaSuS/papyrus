@@ -286,7 +286,8 @@ def _reports_enabled():
 @app.context_processor
 def inject_config():
     return {'cfg': CFG, 'csp_nonce': getattr(g, 'csp_nonce', ''),
-            'reports_enabled': _reports_enabled(), 'is_admin': is_admin()}
+            'reports_enabled': _reports_enabled(), 'is_admin': is_admin(),
+            'palettes': _PALETTES, 'default_palette': _DEFAULT_PALETTE, 'theme_css_version': _THEME_CSS_VERSION}
 
 @app.template_filter('markdown')
 def markdown_filter(text):
@@ -675,6 +676,77 @@ def _expires_at(option):
     except OverflowError:                            # so long that it is effectively "never"
         return None
 
+# ── Colour themes ─────────────────────────────────────────────────────────────
+# config.json: theme.palettes maps a name to {"label", "logo_filter" (optional), "light": {...}, "dark": {...}}.
+# The server turns them into one stylesheet (/theme.css); the page picks a palette through
+# <html data-palette="..."> and light or dark through data-theme, so there is no flash of other colours.
+_THEME_COLOURS = {     # key in config.json -> CSS variable
+    'primary': '--primary', 'primary_hover': '--primary-h', 'on_primary': '--on-primary',
+    'background': '--bg', 'surface': '--surface', 'border': '--border',
+    'text': '--text', 'text_secondary': '--text-sub', 'text_muted': '--text-muted', 'danger': '--danger',
+}
+_HEX_COLOUR_RE   = re.compile(r'^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})$')
+_PALETTE_NAME_RE = re.compile(r'^[a-z0-9-]{1,32}$')
+_LOGO_FILTER_RE  = re.compile(r'^[a-z0-9(),. -]{1,80}$')
+
+def _load_palettes(theme_cfg):
+    """The configured palettes as [{'value', 'label', 'logo_filter', 'light', 'dark'}], plus the default.
+
+    Raises RuntimeError for a broken definition, so a typo fails at startup.
+    """
+    configured = theme_cfg.get('palettes')
+    if not isinstance(configured, dict) or not configured:
+        raise RuntimeError('theme.palettes must be a map with at least one palette; see config.example.json')
+    palettes = []
+    for name, spec in configured.items():
+        if not _PALETTE_NAME_RE.match(name):
+            raise RuntimeError(f"theme.palettes: the name '{name}' must be lowercase letters, digits or '-' "
+                               f"(up to 32 characters)")
+        if not isinstance(spec, dict):
+            raise RuntimeError(f"theme.palettes '{name}' must be a map with \"light\" and \"dark\" colours")
+        modes = {}
+        for mode in ('light', 'dark'):
+            colours = spec.get(mode)
+            if not isinstance(colours, dict):
+                raise RuntimeError(f"theme.palettes '{name}' needs a \"{mode}\" map of colours")
+            missing = [key for key in _THEME_COLOURS if key not in colours]
+            if missing:
+                raise RuntimeError(f"theme.palettes '{name}' {mode}: missing {', '.join(missing)}")
+            for key in _THEME_COLOURS:
+                if not isinstance(colours[key], str) or not _HEX_COLOUR_RE.match(colours[key]):
+                    raise RuntimeError(f"theme.palettes '{name}' {mode}: '{key}' must be a hex colour like "
+                                       f"#c2410c, not {colours[key]!r}")
+            modes[mode] = {key: colours[key] for key in _THEME_COLOURS}
+        logo_filter = spec.get('logo_filter') or 'none'
+        if not isinstance(logo_filter, str) or not _LOGO_FILTER_RE.match(logo_filter):
+            raise RuntimeError(f"theme.palettes '{name}': logo_filter must be a CSS filter such as "
+                               f"\"hue-rotate(120deg)\" or \"grayscale(1)\"")
+        palettes.append({'value': name, 'label': str(spec.get('label') or name), 'logo_filter': logo_filter, **modes})
+    default = theme_cfg.get('palette', palettes[0]['value'])
+    if default not in {p['value'] for p in palettes}:
+        raise RuntimeError(f"theme.palette '{default}' is not one of: {', '.join(p['value'] for p in palettes)}")
+    return palettes, default
+
+def _build_theme_css(palettes):
+    blocks = []
+    for pal in palettes:
+        for mode in ('light', 'dark'):
+            c = pal[mode]
+            selector = f'[data-palette="{pal["value"]}"]' + ('[data-theme="dark"]' if mode == 'dark' else '')
+            lines = [f'    {var}: {c[key]};' for key, var in _THEME_COLOURS.items()]
+            lines += [f"    --code-bg: {c['surface'] if mode == 'light' else c['background']};",
+                      f"    --nav-bg: {c['background'] if mode == 'light' else c['surface']};",
+                      f"    --nav-border: {c['border']};",
+                      f'    color-scheme: {mode};']              # native controls and scrollbars follow
+            if mode == 'light':
+                lines.append(f"    --logo-filter: {pal['logo_filter']};")
+            blocks.append(selector + ' {\n' + '\n'.join(lines) + '\n}')
+    return '\n'.join(blocks) + '\n'
+
+_PALETTES, _DEFAULT_PALETTE = _load_palettes(_theme)
+_THEME_CSS = _build_theme_css(_PALETTES)
+_THEME_CSS_VERSION = hashlib.sha256(_THEME_CSS.encode()).hexdigest()[:10]
+
 # Prism language ids differ from ours for a few languages; False = no highlighting.
 _PRISM_LANG_MAP = {'text': False, 'html': 'markup', 'xml': 'markup'}
 
@@ -687,6 +759,12 @@ def _prism_language(language):
 def index():
     return render_template('index.html', language_hints=_language_hints(),
                            expiry_options=_EXPIRY_OPTIONS, default_expiry=_DEFAULT_EXPIRY)
+
+@app.route('/theme.css')
+def theme_css():
+    response = Response(_THEME_CSS, mimetype='text/css')
+    response.headers['Cache-Control'] = 'public, max-age=86400'      # pages link it as /theme.css?v=<hash>
+    return response
 
 @app.route('/favicon.ico')
 def favicon():
@@ -883,8 +961,8 @@ def get_client_config():
         'theme': {
             'default':          _theme.get('default', 'auto'),
             'allow_user_toggle': _theme.get('allow_user_toggle', True),
-            'light':            _theme.get('light', {}),
-            'dark':             _theme.get('dark', {}),
+            'palette':          _DEFAULT_PALETTE,
+            'palettes':         [{'value': p['value'], 'label': p['label']} for p in _PALETTES],
         },
         'features': {
             'show_recent':      _feat.get('show_recent', False),
