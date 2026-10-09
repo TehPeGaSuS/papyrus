@@ -637,3 +637,30 @@ a.comment-reply:hover { text-decoration: underline; color: var(--primary); }
     padding: 0.2rem 0.5rem; border-radius: var(--radius); cursor: pointer; font-size: 0.75rem;
 }
 .btn-small:hover { border-color: var(--primary); color: var(--primary); }
+
+/* ── Create page: description, file bar, editor options (Gist-style structure) ─────── */
+.compose-head { flex-shrink: 0; padding: 0.55rem 1rem 0; background: var(--bg); }
+.compose-description, .compose-filename {
+    background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius);
+    color: var(--text); font-family: inherit; outline: none;
+}
+.compose-description { width: 100%; padding: 0.4rem 0.7rem; font-size: 0.9rem; }
+.compose-filename { flex: 1 1 14rem; min-width: 10rem; max-width: 26rem; padding: 0.3rem 0.6rem; font-size: 0.8rem; }
+.compose-description:focus, .compose-filename:focus { border-color: var(--primary); }
+.editor-bar {
+    flex-shrink: 0; display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem 0.9rem;
+    padding: 0.5rem 1rem; margin-top: 0.55rem;
+    background: var(--surface); border-top: 1px solid var(--border); border-bottom: 1px solid var(--border);
+}
+.editor-bar-spacer { flex: 1 1 0; }
+.bar-field { display: inline-flex; align-items: center; gap: 0.4rem; font-size: 0.75rem; color: var(--text-sub); white-space: nowrap; }
+.full-editor.no-wrap { white-space: pre; overflow-x: auto; }
+.editor-hint { flex-shrink: 0; padding: 0.25rem 1rem; font-size: 0.7rem; color: var(--text-muted); background: var(--surface); border-top: 1px solid var(--border); }
+
+/* ── View page: file header ───────────────────────────────────────────── */
+.file-header {
+    display: flex; flex-wrap: wrap; align-items: baseline; gap: 0.25rem 0.9rem; flex-shrink: 0;
+    padding: 0.45rem 1.5rem; background: var(--surface); border-bottom: 1px solid var(--border);
+}
+.file-name { font-weight: 600; font-size: 0.85rem; color: var(--text); word-break: break-all; }
+.file-meta { font-size: 0.75rem; color: var(--text-muted); }

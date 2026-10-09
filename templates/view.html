@@ -42,8 +42,12 @@
 
 {% block content %}
 {% if request.args.get('reported') %}<div class="notice" role="status">Thanks, your report was sent to the administrator.</div>{% endif %}
+<div class="file-header">
+    <span class="file-name">{{ paste.filename or 'untitled' }}</span>
+    <span class="file-meta">{{ paste.language }} &middot; {{ line_count }} line{{ '' if line_count == 1 else 's' }} &middot; {{ size }}</span>
+</div>
 <div class="view-full wrap-lines" id="viewFull"
-     data-paste-id="{{ paste.id }}" data-title="{{ paste.title }}" data-language="{{ paste.language }}">
+     data-paste-id="{{ paste.id }}" data-title="{{ paste.title }}" data-filename="{{ paste.filename }}" data-language="{{ paste.language }}">
     <pre id="viewPre"{% if prism_lang %} class="language-{{ prism_lang }}"{% endif %}><code id="codeBlock"{% if prism_lang %} class="language-{{ prism_lang }}"{% endif %}>{{ paste.content }}</code></pre>
 </div>
 {% if paste.discussions_enabled %}

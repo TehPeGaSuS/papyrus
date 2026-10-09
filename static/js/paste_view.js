@@ -77,7 +77,7 @@ async function copyPaste() {
 }
 
 async function downloadPaste() {
-    const { title = 'untitled', language = 'text' } = pasteMeta();
+    const { title = 'untitled', language = 'text', filename = '' } = pasteMeta();
     const extMap = {
         javascript: '.js',  typescript: '.ts',  python:  '.py',   java:       '.java',
         c:          '.c',   cpp:        '.cpp',  csharp:  '.cs',   html:       '.html',
@@ -89,10 +89,11 @@ async function downloadPaste() {
     };
     let content;
     try { content = await fetchRawContent(); } catch (e) { alert('Download failed.'); return; }
-    const filename = title.replace(/[^a-z0-9.\-]/gi, '_') + (extMap[language] ?? '.txt');
+    const safe = s => s.replace(/[^a-z0-9._\-]/gi, '_');
+    const downloadName = filename ? safe(filename) : safe(title) + (extMap[language] ?? '.txt');
     const blob = new Blob([content], { type: 'text/plain' });
     const url  = URL.createObjectURL(blob);
-    const a    = Object.assign(document.createElement('a'), { href: url, download: filename });
+    const a    = Object.assign(document.createElement('a'), { href: url, download: downloadName });
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);

@@ -11,6 +11,8 @@ SQLite for storage, no build step.
   (`![alt](url)`) are shown as plain links, never embedded. The only images the site serves are its
   own logo and icons
 - **Paste and share**: short links (`/<id>`), raw text at `/raw/<id>`, `curl` uploads, download as a file
+- **Gist-style editor**: description, filename (the extension picks the syntax highlighting), indent mode
+  (spaces or tabs), indent size (2, 4, 8), soft wrap or no wrap, Tab/Shift+Tab indenting and auto-indent
 - **Syntax highlighting** with Prism.js, line numbers, line-range links (`?L=5-12`), word wrap toggle
 - **Expiry**: 1 hour, 1 day, 1 week, 1 month, 1 year or never (configurable)
 - **Threaded discussions**: optional per-paste comments and nested replies, each in its own box,
@@ -20,7 +22,7 @@ SQLite for storage, no build step.
 - **Reports**: a Report button on every paste and comment, a no-JavaScript report form (reason and an
   optional note), and a queue in `/admin` with the most-reported items first. Reports exist while the admin
   panel is enabled (`python3 app.py admin`); `features.reports` switches them off
-- Dark/light theme, auto-saved drafts, keyboard shortcuts, optional recent-pastes page
+- Dark/light theme, keyboard shortcuts, optional recent-pastes page
 
 ## Requirements
 
@@ -103,7 +105,7 @@ WantedBy=multi-user.target
 `curl` works without a browser:
 
 ```bash
-curl --data-binary @file.py 'https://host/create?title=notes&language=python&expires_in=1day'
+curl --data-binary @file.py 'https://host/create?filename=file.py&title=notes&expires_in=1day'
 # prints the paste URL; the deletion token is in the X-Deletion-Token response header
 curl https://host/raw/<id>
 ```
@@ -111,8 +113,8 @@ curl https://host/raw/<id>
 ## API
 
 - `GET /`: create-paste page
-- `POST /create`: create a paste. JSON (`content`, optional `title`, `language`, `expires_in`,
-  `discussions`) or a plain-text body as above
+- `POST /create`: create a paste. JSON (`content`, optional `title` (the description), `filename`, `language`
+  (`auto` or omitted: detected from the filename), `expires_in`, `discussions`) or a plain-text body as above
 - `GET /<id>`: view a paste; `GET /raw/<id>`: its content as `text/plain`
 - `POST /<id>/comment`: add a comment (form fields `content`, optional `nick`, optional `parent`, the
   id of the comment being answered; threads deeper than 6 levels are flattened)

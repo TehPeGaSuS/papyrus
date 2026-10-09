@@ -4,19 +4,17 @@
 {% block main_class %}full-page{% endblock %}
 
 {% block nav_actions %}
-<input type="text" id="title" placeholder="Title (optional)" class="nav-input" maxlength="100" autocomplete="off">
-<select id="language" class="nav-select"></select>
-<select id="expires_in" class="nav-select">
+<select id="expires_in" class="nav-select" title="Expires">
     {% for opt in cfg.pastes.allow_expiry_options %}
     <option value="{{ opt }}" {% if opt == cfg.pastes.default_expiry %}selected{% endif %}>
         {{ cfg.pastes.expiry_labels.get(opt, opt) }}
     </option>
     {% endfor %}
 </select>
-<button id="clearBtn" class="nav-btn">Clear</button>
 <label class="nav-label" title="Allow discussions on this paste">
     <input type="checkbox" id="allowDiscussions"> Discuss
 </label>
+<button id="clearBtn" class="nav-btn">Clear</button>
 <button id="submitBtn" class="nav-btn nav-btn-save">Save</button>
 {% if cfg.theme.allow_user_toggle %}
 <button id="themeToggle" class="theme-toggle">🌙</button>
@@ -24,6 +22,33 @@
 {% endblock %}
 
 {% block content %}
+<div class="compose-head">
+    <input type="text" id="title" class="compose-description" placeholder="Description (optional)" maxlength="100" autocomplete="off" aria-label="Description">
+</div>
+<div class="editor-bar">
+    <input type="text" id="filename" class="compose-filename" placeholder="Filename including extension (optional), e.g. deploy.sh" maxlength="100" autocomplete="off" spellcheck="false" aria-label="Filename">
+    <select id="language" class="nav-select" title="Syntax highlighting" aria-label="Language"></select>
+    <span class="editor-bar-spacer"></span>
+    <label class="bar-field">Indent mode
+        <select id="indentMode" class="nav-select">
+            <option value="spaces">Spaces</option>
+            <option value="tabs">Tabs</option>
+        </select>
+    </label>
+    <label class="bar-field">Indent size
+        <select id="indentSize" class="nav-select">
+            <option value="2">2</option>
+            <option value="4" selected>4</option>
+            <option value="8">8</option>
+        </select>
+    </label>
+    <label class="bar-field">Line wrap mode
+        <select id="wrapMode" class="nav-select">
+            <option value="soft">Soft wrap</option>
+            <option value="off">No wrap</option>
+        </select>
+    </label>
+</div>
 <textarea
     id="content"
     class="full-editor"
@@ -32,6 +57,8 @@
     autocomplete="off"
     autocorrect="off"
     autocapitalize="off"></textarea>
+<div class="editor-hint">Tab indents and Shift+Tab outdents. To move focus out of the editor, press Esc and then Tab.</div>
+<script type="application/json" id="languageHints">{{ language_hints | tojson }}</script>
 {% endblock %}
 
 {% block scripts %}

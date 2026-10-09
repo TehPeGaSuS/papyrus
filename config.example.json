@@ -83,8 +83,6 @@
     "reports": true,
     "show_view_count": true,
     "allow_raw_api": true,
-    "auto_save_draft": true,
-    "draft_max_age_days": 7,
     "keyboard_shortcuts": true
   },
 

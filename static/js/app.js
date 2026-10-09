@@ -24,9 +24,10 @@ const _UI_VAR_MAP = {
 
 // Fetch config and initialise application when ready
 document.addEventListener('DOMContentLoaded', () => {
+    // Older versions kept an unsent draft in localStorage; remove any that is still around.
+    try { localStorage.removeItem('paste_draft'); } catch (e) { /* storage unavailable */ }
+
     // 1. Initialise DOM-dependent listeners IMMEDIATELY
-    initAutoSave();
-    
     const toggleBtn = document.getElementById('themeToggle');
     if (toggleBtn) {
         toggleBtn.addEventListener('click', toggleTheme);
@@ -41,11 +42,6 @@ document.addEventListener('DOMContentLoaded', () => {
                 // Re-apply in case config changed defaults
                 initialiseTheme();
                 applyUiVars();
-                // refresh autosave settings if they come from config
-                if (window.PBCFG?.features?.auto_save_draft === false) {
-                     // If now disabled, we could stop listeners, but for simplicity
-                     // we just won't save next time.
-                }
             }
         } catch (e) {
             console.warn('Could not load /api/config, using CSS fallbacks.', e);
@@ -185,66 +181,6 @@ window.formatDateTime = function (dateString) {
     const y = Math.floor(diffDays / 365);
     return `${y} year${y > 1 ? 's' : ''} ago`;
 };
-
-// ── Draft auto-save ─────────────────────────────────────────────────────────
-
-function initAutoSave() {
-    const contentTextarea = document.getElementById('content');
-    const titleInput      = document.getElementById('title');
-    if (!contentTextarea) return;
-
-    if (window.PBCFG?.features?.auto_save_draft !== false) {
-        loadDraft();
-    }
-
-    let saveTimeout;
-    function saveDraft() {
-        clearTimeout(saveTimeout);
-        saveTimeout = setTimeout(() => {
-            const draft = {
-                title:     titleInput ? titleInput.value : '',
-                content:   contentTextarea.value,
-                timestamp: new Date().toISOString()
-            };
-            if (draft.content.trim()) {
-                localStorage.setItem('paste_draft', JSON.stringify(draft));
-            } else {
-                localStorage.removeItem('paste_draft');
-            }
-        }, 1000);
-    }
-
-    contentTextarea.addEventListener('input', saveDraft);
-    if (titleInput) titleInput.addEventListener('input', saveDraft);
-}
-
-function loadDraft() {
-    const raw = localStorage.getItem('paste_draft');
-    if (!raw) return;
-    try {
-        const draft    = JSON.parse(raw);
-        const maxDays  = window.PBCFG?.features?.draft_max_age_days ?? 7;
-        const maxAge   = maxDays * 86400000;
-        const draftAge = Date.now() - new Date(draft.timestamp).getTime();
-
-        if (draftAge > maxAge) { localStorage.removeItem('paste_draft'); return; }
-
-        if (draft.content && draft.content.trim() &&
-            confirm('A draft was found. Would you like to restore it?')) {
-            const title   = document.getElementById('title');
-            const content = document.getElementById('content');
-            if (title)   title.value   = draft.title   || '';
-            if (content) content.value = draft.content || '';
-        }
-    } catch (e) {
-        localStorage.removeItem('paste_draft');
-    }
-}
-
-window.clearDraft = function () {
-    console.log('[Draft] Clearing localStorage draft...');
-    localStorage.removeItem('paste_draft');
-}
 
 // ── Keyboard shortcuts ──────────────────────────────────────────────────────
 

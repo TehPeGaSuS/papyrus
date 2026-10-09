@@ -322,6 +322,7 @@ def _create_tables(conn):
         CREATE TABLE IF NOT EXISTS pastes (
             id                  TEXT PRIMARY KEY,
             title               TEXT NOT NULL DEFAULT 'Untitled',
+            filename            TEXT NOT NULL DEFAULT '',
             content             TEXT NOT NULL,
             language            TEXT NOT NULL DEFAULT 'text',
             created_at          TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -331,6 +332,8 @@ def _create_tables(conn):
             discussions_enabled INTEGER DEFAULT 0
         )
     ''')
+    if 'filename' not in _columns(conn, 'pastes'):  # created before filenames existed
+        conn.execute("ALTER TABLE pastes ADD COLUMN filename TEXT NOT NULL DEFAULT ''")
     conn.execute('CREATE INDEX IF NOT EXISTS idx_pastes_created ON pastes(created_at)')
     conn.execute('''
         CREATE TABLE IF NOT EXISTS comments (
@@ -599,6 +602,51 @@ def _clean_language(language):
         return language
     return _pastes.get('default_language', 'text')
 
+MAX_FILENAME_LENGTH = 100
+
+def _clean_filename(value):
+    """A display name like 'deploy.sh': no directories, no control characters."""
+    if not isinstance(value, str):
+        return ''
+    name = _CONTROL_CHARS_RE.sub('', value).replace('\\', '/').rsplit('/', 1)[-1].strip()
+    return name[:MAX_FILENAME_LENGTH]
+
+# File extension -> language. Only languages listed in config.json are ever returned.
+_EXTENSION_LANGUAGES = {
+    'js': 'javascript', 'mjs': 'javascript', 'cjs': 'javascript', 'jsx': 'javascript',
+    'ts': 'typescript', 'tsx': 'typescript', 'py': 'python', 'pyw': 'python', 'java': 'java',
+    'c': 'c', 'h': 'c', 'cpp': 'cpp', 'cc': 'cpp', 'cxx': 'cpp', 'hpp': 'cpp', 'hh': 'cpp',
+    'cs': 'csharp', 'html': 'html', 'htm': 'html', 'css': 'css', 'scss': 'scss', 'sql': 'sql',
+    'json': 'json', 'yml': 'yaml', 'yaml': 'yaml', 'xml': 'xml', 'svg': 'xml',
+    'sh': 'bash', 'bash': 'bash', 'zsh': 'bash', 'ps1': 'powershell', 'php': 'php', 'rb': 'ruby',
+    'go': 'go', 'rs': 'rust', 'swift': 'swift', 'kt': 'kotlin', 'kts': 'kotlin',
+    'md': 'markdown', 'markdown': 'markdown', 'diff': 'diff', 'patch': 'diff',
+    'toml': 'toml', 'ini': 'ini', 'cfg': 'ini', 'txt': 'text', 'log': 'text',
+}
+_FILENAME_LANGUAGES = {'dockerfile': 'docker', 'nginx.conf': 'nginx', '.bashrc': 'bash',
+                       '.zshrc': 'bash', '.profile': 'bash'}
+
+def _supported_languages():
+    return {entry['value'] for entry in CFG.get('languages', [])}
+
+def _detect_language(filename):
+    """Language for a filename, or None when it isn't recognised."""
+    name = (filename or '').lower()
+    language = _FILENAME_LANGUAGES.get(name) or _EXTENSION_LANGUAGES.get(name.rsplit('.', 1)[-1] if '.' in name else '')
+    return language if language in _supported_languages() else None
+
+def _language_hints():
+    """Detection tables for the editor page, restricted to the languages this site offers."""
+    ok = _supported_languages()
+    return {'extensions': {k: v for k, v in _EXTENSION_LANGUAGES.items() if v in ok},
+            'names': {k: v for k, v in _FILENAME_LANGUAGES.items() if v in ok}}
+
+def _human_size(n):
+    for unit in ('B', 'KB', 'MB'):
+        if n < 1024 or unit == 'MB':
+            return f'{n} B' if unit == 'B' else f'{n:.1f} {unit}'
+        n /= 1024
+
 _EXPIRY_DELTAS = {
     '1hour':  datetime.timedelta(hours=1),
     '1day':   datetime.timedelta(days=1),
@@ -627,7 +675,7 @@ def _prism_language(language):
 
 @app.route('/')
 def index():
-    return render_template('index.html')
+    return render_template('index.html', language_hints=_language_hints())
 
 @app.route('/favicon.ico')
 def favicon():
@@ -651,6 +699,7 @@ def create_paste():
         data = {
             'content':     body,
             'title':       request.args.get('title'),
+            'filename':    request.args.get('filename'),
             'language':    request.args.get('language'),
             'expires_in':  request.args.get('expires_in', _pastes.get('default_expiry', 'never')),
             'discussions': request.args.get('discussions') in ('1', 'true', 'yes'),
@@ -668,8 +717,16 @@ def create_paste():
     if '\x00' in content:  # images and other binary formats are full of NUL bytes
         return jsonify({'error': 'Only text is accepted'}), 415
 
-    title = _clean_title(data.get('title'))
-    language = _clean_language(data.get('language'))
+    filename = _clean_filename(data.get('filename'))
+    raw_title = data.get('title')
+    title = _clean_title(raw_title)
+    if filename and not (isinstance(raw_title, str) and raw_title.strip()):
+        title = filename                              # no description given: show the filename
+    requested = data.get('language')
+    if isinstance(requested, str) and requested not in ('', 'auto'):
+        language = _clean_language(requested)         # an explicit choice always wins
+    else:
+        language = _detect_language(filename) or _pastes.get('default_language', 'text')
     discussions = bool(data.get('discussions', False))
     expires_at = _expiry_from_choice(data.get('expires_in', _pastes.get('default_expiry', 'never')))
 
@@ -679,9 +736,9 @@ def create_paste():
             paste_id = generate_paste_id()
             try:
                 conn.execute(
-                    'INSERT INTO pastes (id, title, content, language, expires_at, deletion_token,'
-                    ' discussions_enabled) VALUES (?, ?, ?, ?, ?, ?, ?)',
-                    (paste_id, title, content, language, expires_at, deletion_token, int(discussions)))
+                    'INSERT INTO pastes (id, title, filename, content, language, expires_at, deletion_token,'
+                    ' discussions_enabled) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+                    (paste_id, title, filename, content, language, expires_at, deletion_token, int(discussions)))
                 conn.commit()
                 break
             except sqlite3.IntegrityError:
@@ -729,8 +786,11 @@ def view_paste(paste_id):
                 'SELECT id, parent_id, nick, content, created_at FROM comments WHERE paste_id = ?'
                 ' ORDER BY created_at ASC, rowid ASC', (paste_id,)).fetchall()
         conn.commit()
+    content = paste['content']
+    lines = content.count('\n') + (0 if content.endswith('\n') else 1)
     return render_template('view.html', paste=paste, comments=_comment_tree(rows),
-                           comment_count=len(rows), prism_lang=_prism_language(paste['language']))
+                           comment_count=len(rows), prism_lang=_prism_language(paste['language']),
+                           line_count=lines, size=_human_size(len(content.encode('utf-8'))))
 
 @app.route('/raw/<string:paste_id>')
 def view_paste_raw(paste_id):
@@ -759,8 +819,6 @@ def get_client_config():
         'features': {
             'show_recent':      _feat.get('show_recent', False),
             'show_view_count':  _feat.get('show_view_count', True),
-            'auto_save_draft':  _feat.get('auto_save_draft', True),
-            'draft_max_age_days': _feat.get('draft_max_age_days', 7),
             'keyboard_shortcuts': _feat.get('keyboard_shortcuts', True),
         },
         'ui': {

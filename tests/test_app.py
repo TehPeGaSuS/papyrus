@@ -1,4 +1,5 @@
 import datetime
+import json
 import os
 import re
 import sqlite3
@@ -832,3 +833,150 @@ def test_admin_visits_do_not_inflate_the_view_counter(client):
 def test_confirmation_handler_is_loaded_on_every_page():
     js = open(os.path.join(os.path.dirname(papyrus.__file__), 'static', 'js', 'app.js')).read()
     assert "dataset.confirm" in js and 'preventDefault' in js
+
+
+# ── Filename, language auto-detection, file header ────────────────────────────
+
+@pytest.mark.parametrize('raw,expected', [
+    ('deploy.sh', 'deploy.sh'),
+    ('../../etc/passwd', 'passwd'),
+    ('C:\\Users\\me\\notes.py', 'notes.py'),
+    ('  spaced name.txt  ', 'spaced name.txt'),
+    ('bad\x00na\x07me.c', 'badname.c'),
+    ('a/b/', ''),
+    ('', ''), (None, ''), (42, ''), (['x'], ''),
+])
+def test_clean_filename(raw, expected):
+    assert papyrus._clean_filename(raw) == expected
+
+
+def test_clean_filename_is_length_limited():
+    assert len(papyrus._clean_filename('x' * 500 + '.py')) == papyrus.MAX_FILENAME_LENGTH
+
+
+@pytest.mark.parametrize('name,language', [
+    ('deploy.sh', 'bash'), ('Main.PY', 'python'), ('app.js', 'javascript'), ('lib.rs', 'rust'),
+    ('Dockerfile', 'docker'), ('nginx.conf', 'nginx'), ('.bashrc', 'bash'), ('notes.txt', 'text'),
+    ('index.HTML', 'html'), ('data.yml', 'yaml'), ('fix.patch', 'diff'),
+    ('archive.tar.gz', None), ('README', None), ('', None), (None, None), ('trailingdot.', None),
+])
+def test_detect_language(name, language):
+    assert papyrus._detect_language(name) == language
+
+
+def test_detection_only_returns_languages_the_site_offers(monkeypatch):
+    monkeypatch.setitem(papyrus.CFG, 'languages', [{'value': 'text', 'name': 'Text'}, {'value': 'python', 'name': 'Python'}])
+    assert papyrus._detect_language('x.py') == 'python'
+    assert papyrus._detect_language('x.sh') is None
+    hints = papyrus._language_hints()
+    assert set(hints['extensions'].values()) <= {'text', 'python'} and 'sh' not in hints['extensions']
+
+
+def stored(pid):
+    return db().execute('SELECT title, filename, language FROM pastes WHERE id=?', (pid,)).fetchone()
+
+
+def test_filename_picks_the_language_and_the_title(client):
+    row = stored(create(client, filename='deploy.sh')['paste_id'])
+    assert (row['filename'], row['language'], row['title']) == ('deploy.sh', 'bash', 'deploy.sh')
+
+
+def test_auto_language_follows_the_filename(client):
+    assert stored(create(client, filename='x.py', language='auto')['paste_id'])['language'] == 'python'
+    assert stored(create(client, filename='x.py', language='')['paste_id'])['language'] == 'python'
+
+
+def test_an_explicit_language_beats_the_filename(client):
+    assert stored(create(client, filename='x.py', language='ruby')['paste_id'])['language'] == 'ruby'
+
+
+def test_unknown_extension_and_no_filename_use_the_default_language(client):
+    default = papyrus._pastes.get('default_language', 'text')
+    assert stored(create(client, filename='data.xyz', language='auto')['paste_id'])['language'] == default
+    row = stored(create(client)['paste_id'])
+    assert (row['filename'], row['title'], row['language']) == ('', 'Untitled', default)
+
+
+def test_description_and_filename_are_kept_separately(client):
+    row = stored(create(client, title='Deploy helper', filename='deploy.sh')['paste_id'])
+    assert (row['title'], row['filename']) == ('Deploy helper', 'deploy.sh')
+
+
+def test_hostile_filename_is_reduced_to_a_name(client):
+    row = stored(create(client, filename='../../etc/<script>x.py')['paste_id'])
+    assert row['filename'] == '<script>x.py'          # stored as text; escaped wherever it is shown
+
+
+def test_curl_upload_accepts_a_filename(client):
+    r = client.post('/create?filename=script.rb', data=b'puts 1\n', content_type='text/plain')
+    pid = r.get_data(as_text=True).strip().rsplit('/', 1)[1]
+    assert (stored(pid)['filename'], stored(pid)['language']) == ('script.rb', 'ruby')
+
+
+def test_file_header_on_the_view_page(client):
+    pid = create(client, filename='deploy.sh', content='echo a\necho b\n')['paste_id']
+    html = client.get(f'/{pid}').get_data(as_text=True)
+    assert '<span class="file-name">deploy.sh</span>' in html
+    assert 'bash &middot; 2 lines &middot; 14 B' in html
+    assert 'data-filename="deploy.sh"' in html
+
+
+def test_file_header_without_a_filename_and_with_html_in_it(client):
+    html = client.get('/' + create(client, content='one line')['paste_id']).get_data(as_text=True)
+    assert '<span class="file-name">untitled</span>' in html and '1 line &middot;' in html
+    pid = create(client, filename='<img src=x>.py')['paste_id']
+    html = client.get(f'/{pid}').get_data(as_text=True)
+    assert '<span class="file-name">&lt;img src=x&gt;.py</span>' in html and '<img src=x>' not in html
+
+
+@pytest.mark.parametrize('content,lines', [('a', 1), ('a\n', 1), ('a\nb', 2), ('a\nb\n', 2), ('a\n\n', 2)])
+def test_line_count(client, content, lines):
+    pid = create(client, content=content)['paste_id']
+    shown = re.search(r'(\d+) lines?', client.get(f'/{pid}').get_data(as_text=True).split('file-meta')[1])
+    assert int(shown.group(1)) == lines
+
+
+@pytest.mark.parametrize('n,text', [(0, '0 B'), (1023, '1023 B'), (1024, '1.0 KB'), (1536, '1.5 KB'),
+                                    (3 * 1024 * 1024, '3.0 MB')])
+def test_human_size(n, text):
+    assert papyrus._human_size(n) == text
+
+
+def test_editor_page_has_the_gist_style_controls(client):
+    html = client.get('/').get_data(as_text=True)
+    for fragment in ('id="title"', 'placeholder="Description (optional)"', 'id="filename"', 'id="language"',
+                     'Indent mode', 'value="spaces"', 'value="tabs"', 'Indent size',
+                     'Line wrap mode', 'value="soft"', 'value="off"', 'No wrap', 'Soft wrap'):
+        assert fragment in html, fragment
+    assert [m for m in re.findall(r'<option value="(\d)"', html) if m in '248'] == ['2', '4', '8']
+    hints = json.loads(re.search(r'id="languageHints">(.*?)</script>', html, re.S).group(1))
+    assert hints['extensions']['sh'] == 'bash' and hints['names']['dockerfile'] == 'docker'
+
+
+def test_filename_column_is_added_to_older_databases(tmp_path, monkeypatch):
+    path = str(tmp_path / 'prev.db')
+    conn = sqlite3.connect(path)
+    conn.executescript("""
+        CREATE TABLE pastes (id TEXT PRIMARY KEY, title TEXT NOT NULL DEFAULT 'Untitled', content TEXT NOT NULL,
+            language TEXT NOT NULL DEFAULT 'text', created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            expires_at TEXT, views INTEGER DEFAULT 0, deletion_token TEXT, discussions_enabled INTEGER DEFAULT 0);
+        INSERT INTO pastes (id, title, content) VALUES ('a0b0c0d0e0f1', 'Old paste', 'hello');
+    """)
+    conn.commit()
+    conn.close()
+    monkeypatch.setattr(papyrus, 'DATABASE', path)
+    monkeypatch.setattr(papyrus, '_db_initialized', False)
+    monkeypatch.setattr(papyrus, '_cleanup_running', True)
+    papyrus.init_db()
+    conn = sqlite3.connect(path)
+    assert conn.execute("SELECT title, filename FROM pastes WHERE id='a0b0c0d0e0f1'").fetchone() == ('Old paste', '')
+    papyrus.app.config['TESTING'] = True
+    assert 'untitled' in papyrus.app.test_client().get('/a0b0c0d0e0f1').get_data(as_text=True)
+
+
+def test_nothing_is_saved_in_the_browser_while_typing(client):
+    js = ''.join(open(os.path.join(os.path.dirname(papyrus.__file__), 'static', 'js', f), encoding='utf-8').read()
+                 for f in ('app.js', 'paste_create.js', 'paste_view.js'))
+    assert "setItem('paste_draft'" not in js and 'saveDraft' not in js and 'loadDraft' not in js
+    features = client.get('/api/config').get_json()['features']
+    assert 'auto_save_draft' not in features and 'draft_max_age_days' not in features
