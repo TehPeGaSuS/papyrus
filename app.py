@@ -7,13 +7,14 @@
 
 On first run it creates .venv, installs Papyrus into it (`pip install -e .`, which also gives
 you a `.venv/bin/papyrus` command) and writes config.json with a fresh random secret_key.
-Behind a reverse proxy, set server.trusted_proxies in config.json.
+Behind a reverse proxy, have the proxy set X-Forwarded-For and X-Forwarded-Proto (see the README).
 """
 import argparse
 import datetime
 import functools
 import getpass
 import hmac
+import ipaddress
 import json
 import multiprocessing
 import os
@@ -130,7 +131,6 @@ import mistune
 import nh3
 from flask import Flask, render_template, request, jsonify, abort, Response, g, session, redirect, url_for
 from markupsafe import Markup
-from werkzeug.middleware.proxy_fix import ProxyFix
 from werkzeug.security import check_password_hash, generate_password_hash
 
 _UTC = datetime.timezone.utc
@@ -175,12 +175,12 @@ if _secret_key in _DEFAULT_KEYS:
     )
 app.config['SECRET_KEY'] = _secret_key
 
-# When running behind N reverse proxies, trust their X-Forwarded-* headers so
-# request.remote_addr (used for rate limiting) is the real client address.
-_trusted_proxies = int(_server.get('trusted_proxies', 0))
-if _trusted_proxies > 0:
-    app.wsgi_app = ProxyFix(app.wsgi_app, x_for=_trusted_proxies,
-                            x_proto=_trusted_proxies, x_host=_trusted_proxies)
+# Reverse proxies: the proxy is expected to set X-Forwarded-For (the client's address) and
+# X-Forwarded-Proto. Papyrus only believes them when the connection itself comes from one of
+# these addresses (default: this machine), so a forged header can't dodge the rate limits
+# if the app is ever reachable directly.
+_TRUSTED_PEERS = [ipaddress.ip_network(str(entry), strict=False)
+                  for entry in _server.get('trusted_proxy_ips', ['127.0.0.1', '::1'])]
 
 # ── Session hardening ─────────────────────────────────────────────────────────
 app.config['SESSION_COOKIE_HTTPONLY'] = True
@@ -459,6 +459,30 @@ def _delete_paste(conn, paste_id):
     conn.execute('DELETE FROM comments WHERE paste_id = ?', (paste_id,))
     conn.execute('DELETE FROM pastes WHERE id = ?', (paste_id,))
 
+def _is_trusted_peer(addr):
+    try:
+        ip = ipaddress.ip_address(addr)
+    except ValueError:
+        return False
+    if ip.version == 6 and ip.ipv4_mapped:
+        ip = ip.ipv4_mapped
+    return any(ip in network for network in _TRUSTED_PEERS)
+
+def _client_ip():
+    """The visitor's address: X-Forwarded-For from a trusted proxy, else the socket peer.
+
+    The last entry is used: it is the one the proxy itself added or set, so anything a
+    visitor put in front of it is ignored.
+    """
+    peer = request.remote_addr or ''
+    if not _is_trusted_peer(peer):
+        return peer
+    last = request.headers.get('X-Forwarded-For', '').rsplit(',', 1)[-1].strip()
+    try:
+        return str(ipaddress.ip_address(last))
+    except ValueError:
+        return peer
+
 def _is_same_origin():
     """Verify that the request is from the same origin to prevent CSRF."""
     def _origin(url):
@@ -584,7 +608,7 @@ def favicon():
 @app.route('/create', methods=['POST'])
 def create_paste():
     # 10 pastes per 10 minutes per IP address (SQLite backed for worker safety)
-    if not _check_rate_limit(request.remote_addr, key_prefix='create', limit=10):
+    if not _check_rate_limit(_client_ip(), key_prefix='create', limit=10):
         return jsonify({'error': 'Rate limit exceeded. Please wait a few minutes.'}), 429
 
     # Two ways in: a JSON body (the web UI) or a plain-text body for curl:
@@ -777,7 +801,7 @@ def post_comment(paste_id):
         abort(403, 'Cross-origin request blocked.')
     if not paste['discussions_enabled']:
         abort(403, 'Discussions are not enabled for this paste.')
-    if not _check_rate_limit(request.remote_addr, key_prefix='comment', window=600, limit=20):
+    if not _check_rate_limit(_client_ip(), key_prefix='comment', window=600, limit=20):
         abort(429, 'Rate limit exceeded. Please wait a few minutes.')
 
     content = (request.form.get('content') or '').strip()
@@ -813,7 +837,7 @@ def preview_markdown():
     """Render Markdown for the comment form's Preview tab."""
     if not _is_same_origin():
         return jsonify({'error': 'Cross-Origin request blocked'}), 403
-    if not _check_rate_limit(request.remote_addr, key_prefix='preview', window=600, limit=120):
+    if not _check_rate_limit(_client_ip(), key_prefix='preview', window=600, limit=120):
         return jsonify({'error': 'Rate limit exceeded.'}), 429
     data = request.get_json(silent=True) or {}
     text = data.get('text')
@@ -839,7 +863,7 @@ def admin_login():
         if not _is_same_origin():
             return "CSRF Blocked", 403
         # Only failed attempts count against the budget.
-        if _is_rate_limited(request.remote_addr, 'admin_login', _ADMIN_LOGIN_WINDOW, _ADMIN_LOGIN_LIMIT):
+        if _is_rate_limited(_client_ip(), 'admin_login', _ADMIN_LOGIN_WINDOW, _ADMIN_LOGIN_LIMIT):
             return render_template('admin_login.html', error='Too many login attempts. Try again later.'), 429
 
         user = request.form.get('username') or ''
@@ -851,7 +875,7 @@ def admin_login():
             session.clear()
             session['admin_logged_in'] = True
             return redirect(url_for('admin_dashboard'))
-        _record_hit(request.remote_addr, 'admin_login')
+        _record_hit(_client_ip(), 'admin_login')
         error = 'Invalid credentials'
     return render_template('admin_login.html', error=error)
 
@@ -929,6 +953,9 @@ def _server_options(host, port, workers, pidfile=None):
         # Newer Gunicorn opens a control socket at one path shared by every instance of
         # the same user; give each Papyrus its own (0600, per port) so they can't collide.
         'control_socket':     _control_socket_path(port),
+        # X-Forwarded-Proto (set by the proxy) decides whether a request counts as HTTPS,
+        # but only from the same trusted proxies as X-Forwarded-For.
+        'forwarded_allow_ips': ','.join(str(network) for network in _TRUSTED_PEERS),
     }
     if pidfile:
         options['pidfile'] = pidfile

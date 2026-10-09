@@ -553,3 +553,68 @@ def test_head_links_point_at_the_icons(client):
     html = client.get('/').get_data(as_text=True)
     for fragment in ('rel="icon" href="/static/favicon.ico"', 'img/favicon-32.png', 'img/apple-touch-icon.png'):
         assert fragment in html
+
+
+# ── Client address behind a reverse proxy ─────────────────────────────────────
+
+def client_ip(remote, forwarded=None):
+    headers = {'X-Forwarded-For': forwarded} if forwarded is not None else {}
+    with papyrus.app.test_request_context('/', headers=headers, environ_overrides={'REMOTE_ADDR': remote}):
+        return papyrus._client_ip()
+
+
+def test_proxy_on_this_machine_is_believed():
+    assert client_ip('127.0.0.1', '203.0.113.9') == '203.0.113.9'
+    assert client_ip('::1', '203.0.113.9') == '203.0.113.9'
+    assert client_ip('::ffff:127.0.0.1', '203.0.113.9') == '203.0.113.9'
+    assert client_ip('127.0.0.1', '2001:db8::7') == '2001:db8::7'
+
+
+def test_last_entry_wins_so_forged_prefixes_are_ignored():
+    # nginx/Apache append the address they saw; whatever the visitor sent stays to the left.
+    assert client_ip('127.0.0.1', '1.2.3.4, 203.0.113.9') == '203.0.113.9'
+    assert client_ip('127.0.0.1', '1.2.3.4,203.0.113.9 ') == '203.0.113.9'
+
+
+def test_untrusted_peer_cannot_spoof_its_address():
+    # The app reached directly (not via the proxy): the header is just a visitor's claim.
+    assert client_ip('198.51.100.20', '1.2.3.4') == '198.51.100.20'
+    assert client_ip('198.51.100.20', '1.2.3.4, 5.6.7.8') == '198.51.100.20'
+
+
+def test_missing_or_garbage_header_falls_back_to_the_peer():
+    assert client_ip('127.0.0.1') == '127.0.0.1'
+    assert client_ip('127.0.0.1', '') == '127.0.0.1'
+    assert client_ip('127.0.0.1', 'unknown') == '127.0.0.1'
+    assert client_ip('127.0.0.1', '203.0.113.9, not-an-ip') == '127.0.0.1'
+    assert client_ip('127.0.0.1', '999.1.1.1') == '127.0.0.1'
+
+
+def test_trusted_proxy_addresses_are_configurable(monkeypatch):
+    import ipaddress
+    monkeypatch.setattr(papyrus, '_TRUSTED_PEERS', [ipaddress.ip_network('10.0.0.0/8')])
+    assert client_ip('10.1.2.3', '203.0.113.9') == '203.0.113.9'
+    assert client_ip('127.0.0.1', '203.0.113.9') == '127.0.0.1'   # loopback no longer trusted
+
+
+def test_rate_limits_follow_the_forwarded_address(client):
+    def post(xff):
+        return client.post('/create', json={'content': 'x'}, headers={'X-Forwarded-For': xff})
+    for _ in range(10):
+        assert post('203.0.113.9').status_code == 200
+    assert post('203.0.113.9').status_code == 429     # that visitor is used up
+    assert post('203.0.113.10').status_code == 200    # another visitor behind the same proxy is not
+
+
+def test_forged_forwarded_for_cannot_reset_a_direct_visitors_limit(client):
+    def post(xff):
+        return client.post('/create', json={'content': 'x'}, headers={'X-Forwarded-For': xff},
+                           environ_overrides={'REMOTE_ADDR': '198.51.100.20'})
+    for i in range(10):
+        assert post(f'1.2.3.{i}').status_code == 200
+    assert post('9.9.9.9').status_code == 429
+
+
+def test_gunicorn_trusts_forwarded_proto_from_the_same_proxies():
+    opts = papyrus._server_options('127.0.0.1', 1027, 2)
+    assert opts['forwarded_allow_ips'] == '127.0.0.1/32,::1/128'

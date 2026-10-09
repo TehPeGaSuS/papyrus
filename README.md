@@ -56,7 +56,8 @@ no `config.json`. Restart after changing it.
 
 - `server.host` / `server.port`: where to listen (default `127.0.0.1:5500`)
 - `server.workers`: Gunicorn workers (default: CPUs + 1, between 2 and 8)
-- `server.trusted_proxies`: number of reverse proxies in front of the app (see below)
+- `server.trusted_proxy_ips`: addresses of the reverse proxy whose `X-Forwarded-*` headers are believed
+  (default `["127.0.0.1", "::1"]`, i.e. a proxy on the same machine; CIDR ranges work too)
 - `server.use_https`: mark the session cookie `Secure`
 - `server.secret_key`: signs the admin session. The `SECRET_KEY` environment variable overrides it
 - `pastes.*`: size limit, default language, expiry options, `recent_limit`
@@ -66,8 +67,17 @@ no `config.json`. Restart after changing it.
 
 ## Deployment
 
-Run it behind a reverse proxy and tell Papyrus how many proxies there are, so rate limiting sees
-the real client address (`"trusted_proxies": 1`, plus `"use_https": true` when serving over TLS).
+Run it behind a reverse proxy and let the proxy say who the visitor is. Papyrus needs two headers:
+
+- `X-Forwarded-For`: the visitor's address, used for the per-IP rate limits. Without it everyone looks
+  like `127.0.0.1` and shares one limit. Papyrus uses the **last** entry, which is the one your proxy
+  set, so anything a visitor sends in front of it is ignored.
+- `X-Forwarded-Proto`: `https` when the visitor used TLS. Without it, posting comments, deleting and
+  the admin login fail the origin check.
+
+Papyrus only believes these headers when the connection comes from `server.trusted_proxy_ips`
+(a proxy on the same machine by default), so a visitor who reaches the app directly can't forge them.
+Keep the app bound to `127.0.0.1` (the default) and set `"use_https": true` when serving over TLS.
 
 nginx:
 
@@ -75,11 +85,25 @@ nginx:
 location / {
     proxy_pass http://127.0.0.1:5500;
     proxy_set_header Host $host;
-    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-For $remote_addr;
     proxy_set_header X-Forwarded-Proto $scheme;
     client_max_body_size 3m;
 }
 ```
+
+Apache (`mod_proxy`, `mod_headers`):
+
+```apache
+ProxyPreserveHost On
+ProxyPass        / http://127.0.0.1:5500/
+ProxyPassReverse / http://127.0.0.1:5500/
+RequestHeader set X-Forwarded-Proto "https"
+# mod_proxy adds X-Forwarded-For itself (ProxyAddHeaders is on by default)
+```
+
+If another proxy or a CDN sits in front of yours, make your proxy see the real visitor address
+(nginx: `set_real_ip_from` and `real_ip_header`; Apache: `mod_remoteip`) so that `$remote_addr`
+above is the visitor and not the CDN.
 
 systemd (`/etc/systemd/system/papyrus.service`), after running `python3 app.py` once as the service
 user to set everything up:
@@ -157,6 +181,7 @@ kept, encrypted ones stay in `pastes_encrypted_legacy`.
   (its logo and icons), never from a paste or comment.
 - State-changing requests are checked against the request's `Origin`/`Referer`.
 - Per-IP, SQLite-backed rate limits apply to paste creation, comments, previews and failed admin logins.
+  `X-Forwarded-For` is believed only from `server.trusted_proxy_ips`, so it can't be forged by a visitor.
 - Paste IDs are random and at least 12 hex characters long.
 - Size limits: `pastes.max_size_bytes` (2 MB default) for pastes, 10 KB for comments.
 - Gunicorn's control socket is named after the project and port (`$XDG_RUNTIME_DIR/papyrus-<port>.ctl`,
