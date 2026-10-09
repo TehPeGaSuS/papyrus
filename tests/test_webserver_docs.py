@@ -33,7 +33,8 @@ def test_nginx_sets_both_headers_with_set_semantics():
 def test_apache_reports_the_real_scheme_and_leaves_tls_to_certbot():
     conf = active(read('webserver', 'apache.conf'))
     assert 'RequestHeader set X-Forwarded-Proto "expr=%{REQUEST_SCHEME}"' in conf
-    assert 'SSLEngine' not in conf and 'Redirect' not in conf
+    assert 'SSLEngine' not in conf and 'SSLCertificate' not in conf     # certbot adds the TLS vhost
+    assert 'Redirect' not in conf and 'RewriteEngine' not in conf        # ... and the redirect
 
 
 def test_caddy_cloudflare_block_only_trusts_cloudflare_peers():

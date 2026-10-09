@@ -30,7 +30,9 @@ Cloudflare*, then follow the normal config for your server (`nginx.conf`, `apach
 
 **SSL/TLS mode: use "Full (strict)"** with a certificate on the origin (Let's Encrypt, or a free
 Cloudflare Origin CA certificate). Avoid "Flexible": Cloudflare would talk to your server over plain HTTP,
-so that leg is unencrypted and your proxy's idea of the scheme is wrong.
+so that leg is unencrypted and your proxy's idea of the scheme is wrong. It also loops forever once
+certbot has added its HTTP to HTTPS redirect: Cloudflare asks over HTTP, gets redirected to HTTPS, and
+asks over HTTP again (the browser reports "too many redirects").
 
 Cloudflare publishes its address ranges at <https://www.cloudflare.com/ips-v4> and
 <https://www.cloudflare.com/ips-v6>. They change occasionally, so generate the include file instead of

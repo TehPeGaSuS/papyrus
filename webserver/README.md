@@ -14,8 +14,11 @@ behind a reverse proxy that terminates TLS. Pick the file for your setup:
 
 - **nginx / Apache**: start from the plain HTTP example and let certbot do the rest:
   `sudo certbot --nginx -d paste.example.com` or `sudo certbot --apache -d paste.example.com`.
-  certbot adds the TLS lines and the HTTP to HTTPS redirect itself, so the examples have neither.
-  They work unchanged before and after: `X-Forwarded-Proto` reports the scheme of each request.
+  certbot adds the TLS lines and the HTTP to HTTPS redirect itself, so the examples have neither. On
+  Apache that is a `RewriteEngine` redirect in this vhost plus a `:443` copy of it (with
+  `SSLCertificateFile`, `SSLCertificateKeyFile` and `Include /etc/letsencrypt/options-ssl-apache.conf`); on
+  nginx it edits the server block in place and adds a separate port-80 redirect block. The examples work
+  unchanged before and after: `X-Forwarded-Proto` reports the scheme of each request.
 - **Caddy**: certificates and the redirect are automatic.
 - **Your own certificates**: add `listen 443 ssl;` plus `ssl_certificate` / `ssl_certificate_key` to the
   nginx server block (or `SSLEngine on` and the certificate lines to a second `<VirtualHost *:443>` in
@@ -63,5 +66,6 @@ Each example was run for real, with Papyrus behind it, using forged `X-Forwarded
 headers: **nginx 1.28**, **Apache 2.4.66** (`expr=` in `RequestHeader` needs 2.4.10 or newer) and
 **Caddy 2.6.2**, in both plain-HTTP and TLS layouts, and with the Cloudflare variants in
 [`cloudflare.md`](cloudflare.md). Forged headers had no effect, and `X-Forwarded-Proto` matched the
-real scheme. The certbot layouts were checked by writing out the result certbot produces, not by
-running certbot itself.
+real scheme. The certbot layouts were checked by applying the lines certbot adds and its real
+`options-ssl-apache.conf` (copied from a real Apache install; TLS 1.2 and 1.3 work, 1.1 is refused as that
+file intends), not by running certbot itself.
