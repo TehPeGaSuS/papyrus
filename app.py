@@ -13,6 +13,7 @@ import argparse
 import datetime
 import functools
 import getpass
+import hashlib
 import hmac
 import ipaddress
 import json
@@ -204,6 +205,8 @@ _CONTROL_CHARS_RE   = re.compile(r'[\x00-\x08\x0b-\x1f\x7f]')
 
 # Reject oversized request bodies before they are read into memory.
 app.config['MAX_CONTENT_LENGTH'] = MAX_PASTE_BYTES + 64 * 1024
+# Werkzeug caps non-file form fields at 500 kB by default; `curl -F 'raw=<-'` sends the paste as one.
+app.config['MAX_FORM_MEMORY_SIZE'] = MAX_PASTE_BYTES + 64 * 1024
 
 # ── Security headers ─────────────────────────────────────────────────────────
 
@@ -328,12 +331,14 @@ def _create_tables(conn):
             created_at          TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             expires_at          TEXT,
             views               INTEGER DEFAULT 0,
-            deletion_token      TEXT,
+            removal_hash        TEXT NOT NULL DEFAULT '',   -- sha256 of the removal token, never the token
             discussions_enabled INTEGER DEFAULT 0
         )
     ''')
     if 'filename' not in _columns(conn, 'pastes'):  # created before filenames existed
         conn.execute("ALTER TABLE pastes ADD COLUMN filename TEXT NOT NULL DEFAULT ''")
+    _upgrade_removal_tokens(conn)
+    conn.execute('CREATE INDEX IF NOT EXISTS idx_pastes_removal ON pastes(removal_hash)')
     conn.execute('CREATE INDEX IF NOT EXISTS idx_pastes_created ON pastes(created_at)')
     conn.execute('''
         CREATE TABLE IF NOT EXISTS comments (
@@ -370,6 +375,24 @@ def _create_tables(conn):
     ''')
     conn.execute('CREATE INDEX IF NOT EXISTS idx_rate_limit_ts ON rate_limits(timestamp)')
 
+_SHA256_RE = re.compile(r'^[0-9a-f]{64}$')
+
+def _hash_token(token):
+    return hashlib.sha256(token.encode('utf-8')).hexdigest()
+
+def _new_removal_token():
+    return secrets.token_urlsafe(24)
+
+def _upgrade_removal_tokens(conn):
+    """Older databases kept the deletion token in plain text; keep it working, but only as a hash."""
+    if 'deletion_token' in _columns(conn, 'pastes'):
+        conn.execute('ALTER TABLE pastes RENAME COLUMN deletion_token TO removal_hash')
+    for rowid, value in conn.execute('SELECT rowid, removal_hash FROM pastes').fetchall():
+        if value is None:
+            conn.execute("UPDATE pastes SET removal_hash = '' WHERE rowid = ?", (rowid,))
+        elif value and not _SHA256_RE.match(value):
+            conn.execute('UPDATE pastes SET removal_hash = ? WHERE rowid = ?', (_hash_token(value), rowid))
+
 def _migrate_encrypted_schema(conn):
     """Move an old end-to-end-encrypted database to the plaintext schema.
 
@@ -393,10 +416,11 @@ def _migrate_encrypted_schema(conn):
             continue
         conn.execute(
             'INSERT INTO pastes (id, title, content, language, created_at, expires_at, views,'
-            ' deletion_token, discussions_enabled) VALUES (?,?,?,?,?,?,?,?,?)',
+            ' removal_hash, discussions_enabled) VALUES (?,?,?,?,?,?,?,?,?)',
             (row['id'], _clean_title(data.get('title')), str(data.get('content') or ''),
              _clean_language(data.get('language')), row['created_at'], row['expires_at'],
-             row['views'], row['deletion_token'], row['discussions_enabled']))
+             row['views'], _hash_token(row['deletion_token']) if row['deletion_token'] else '',
+             row['discussions_enabled']))
         kept += 1
         # Old comments held a JSON blob ({content, nick}), or ciphertext we can't read.
         legacy = conn.execute("SELECT name FROM sqlite_master WHERE name='comments_encrypted_legacy'").fetchone()
@@ -682,40 +706,20 @@ def favicon():
     # Browsers and crawlers ask for this path directly, whatever the <link> tags say.
     return app.send_static_file('favicon.ico')
 
-@app.route('/create', methods=['POST'])
-def create_paste():
-    # 10 pastes per 10 minutes per IP address (SQLite backed for worker safety)
-    if not _check_rate_limit(_client_ip(), key_prefix='create', limit=10):
-        return jsonify({'error': 'Rate limit exceeded. Please wait a few minutes.'}), 429
+class _PasteError(Exception):
+    def __init__(self, message, status):
+        super().__init__(message)
+        self.message, self.status = message, status
 
-    # Two ways in: a JSON body (the web UI) or a plain-text body for curl:
-    #   curl --data-binary @file 'https://host/create?title=x&language=python&expires_in=1day'
-    plain_text = request.mimetype == 'text/plain'
-    if plain_text:
-        try:
-            body = request.get_data().decode('utf-8')   # strict: binary files are not text
-        except UnicodeDecodeError:
-            return jsonify({'error': 'Only UTF-8 text is accepted'}), 415
-        data = {
-            'content':     body,
-            'title':       request.args.get('title'),
-            'filename':    request.args.get('filename'),
-            'language':    request.args.get('language'),
-            'expires_in':  request.args.get('expires_in', _pastes.get('default_expiry', 'never')),
-            'discussions': request.args.get('discussions') in ('1', 'true', 'yes'),
-        }
-    else:
-        data = request.get_json(silent=True)
-        if not isinstance(data, dict):
-            return jsonify({'error': 'JSON body required'}), 400
-
+def _store_paste(data):
+    """Validate the fields of a new paste and store it: (paste_id, removal_token, expires_at)."""
     content = data.get('content')
     if not content or not isinstance(content, str) or not content.strip():
-        return jsonify({'error': 'content must be a non-empty string'}), 400
+        raise _PasteError('content must be a non-empty string', 400)
     if len(content.encode('utf-8')) > MAX_PASTE_BYTES:
-        return jsonify({'error': 'Paste too large'}), 413
+        raise _PasteError('Paste too large', 413)
     if '\x00' in content:  # images and other binary formats are full of NUL bytes
-        return jsonify({'error': 'Only text is accepted'}), 415
+        raise _PasteError('Only text is accepted', 415)
 
     filename = _clean_filename(data.get('filename'))
     raw_title = data.get('title')
@@ -728,51 +732,122 @@ def create_paste():
     else:
         language = _detect_language(filename) or _pastes.get('default_language', 'text')
     discussions = bool(data.get('discussions', False))
-    expires_at = _expiry_from_choice(data.get('expires_in', _pastes.get('default_expiry', 'never')))
+    expires_at = _expiry_from_choice(data.get('expires_in') or _pastes.get('default_expiry', 'never'))
 
-    deletion_token = secrets.token_urlsafe(32)
+    token = _new_removal_token()
     with _db() as conn:
         for _ in range(5):
             paste_id = generate_paste_id()
             try:
                 conn.execute(
-                    'INSERT INTO pastes (id, title, filename, content, language, expires_at, deletion_token,'
+                    'INSERT INTO pastes (id, title, filename, content, language, expires_at, removal_hash,'
                     ' discussions_enabled) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
-                    (paste_id, title, filename, content, language, expires_at, deletion_token, int(discussions)))
+                    (paste_id, title, filename, content, language, expires_at, _hash_token(token), int(discussions)))
                 conn.commit()
-                break
+                return paste_id, token, expires_at
             except sqlite3.IntegrityError:
                 continue
-        else:
-            return jsonify({'error': 'Service temporarily unavailable'}), 503
+    raise _PasteError('Service temporarily unavailable', 503)
 
+def _text_response(body, status=200):
+    return Response(body, status=status, mimetype='text/plain')
+
+def _creation_summary(paste_id, token):
+    """What `curl` prints: the paste, its raw text, and the link that removes it."""
+    base = request.host_url
+    return (f'Paste URL:   {base}{paste_id}\n'
+            f'Raw URL:     {base}raw/{paste_id}\n'
+            f'Removal URL: {base}remove/{token}\n')
+
+def _set_removal_cookie(response, paste_id, token, expires_at):
+    """Remember in this browser that it made the paste, so the page keeps offering "Remove now"
+    (across refreshes, closed tabs and restarts) until the paste expires."""
+    if expires_at:
+        seconds = max(60, int((_parse_expiry(expires_at) - datetime.datetime.now(_UTC)).total_seconds()))
+    else:
+        seconds = 365 * 86400
+    response.set_cookie('removal', token, max_age=seconds, path=f'/{paste_id}', httponly=True,
+                        samesite='Lax', secure=bool(_server.get('use_https', False)))
+
+def _flag(value):
+    return value in (True, 1, '1', 'true', 'yes', 'on')
+
+@app.route('/create', methods=['POST'])
+def create_paste():
+    """The web UI posts JSON; `curl --data-binary @file 'https://host/create?filename=x.py'` posts text."""
+    plain_text = request.mimetype == 'text/plain'
+    def fail(message, status):
+        return _text_response(message + '\n', status) if plain_text else (jsonify({'error': message}), status)
+
+    # 10 pastes per 10 minutes per IP address (SQLite backed for worker safety)
+    if not _check_rate_limit(_client_ip(), key_prefix='create', limit=10):
+        return fail('Rate limit exceeded. Please wait a few minutes.', 429)
     if plain_text:
-        resp = Response(request.host_url + paste_id + '\n', mimetype='text/plain')
-        resp.headers['X-Deletion-Token'] = deletion_token
-        return resp
-    return jsonify({'paste_id': paste_id, 'url': f'/{paste_id}', 'deletion_token': deletion_token})
+        try:
+            body = request.get_data().decode('utf-8')   # strict: binary files are not text
+        except UnicodeDecodeError:
+            return fail('Only UTF-8 text is accepted', 415)
+        data = {'content': body, **{k: request.args.get(k) for k in ('title', 'filename', 'language', 'expires_in')},
+                'discussions': _flag(request.args.get('discussions'))}
+    else:
+        data = request.get_json(silent=True)
+        if not isinstance(data, dict):
+            return fail('JSON body required', 400)
+    try:
+        paste_id, token, expires_at = _store_paste(data)
+    except _PasteError as e:
+        return fail(e.message, e.status)
+    if plain_text:
+        return _text_response(_creation_summary(paste_id, token))
+    response = jsonify({'paste_id': paste_id, 'url': f'/{paste_id}',
+                        'removal_token': token, 'removal_url': f'/remove/{token}'})
+    _set_removal_cookie(response, paste_id, token, expires_at)
+    return response
 
-@app.route('/api/delete/<string:paste_id>', methods=['POST'])
-def delete_paste(paste_id):
-    if not _PASTE_ID_RE.match(paste_id):
-        abort(404)
-    if not _is_same_origin():
-        return jsonify({'error': 'Cross-Origin request blocked'}), 403
+@app.route('/curl', methods=['POST'])
+def create_paste_curl():
+    """`echo hi | curl -X POST https://host/curl -F 'raw=<-'`, plus optional filename, title, language,
+    expires_in and discussions fields. Prints the paste, raw and removal URLs."""
+    if not _check_rate_limit(_client_ip(), key_prefix='create', limit=10):
+        return _text_response('Rate limit exceeded. Please wait a few minutes.\n', 429)
+    form = request.form
+    data = {'content': form.get('raw'), 'title': form.get('title'), 'filename': form.get('filename'),
+            'language': form.get('language'), 'expires_in': form.get('expires_in') or form.get('expiry'),
+            'discussions': _flag(form.get('discussions'))}
+    try:
+        paste_id, token, _ = _store_paste(data)
+    except _PasteError as e:
+        return _text_response(e.message + '\n', e.status)
+    return _text_response(_creation_summary(paste_id, token))
 
-    data = request.get_json(silent=True) or {}
-    token = data.get('token')
-    if not token:
-        return jsonify({'error': 'Deletion token required'}), 400
+# ── Removing a paste ──────────────────────────────────────────────────────────
 
+def _paste_for_removal(conn, token):
+    if not token or len(token) > 200:
+        return None
+    return conn.execute("SELECT * FROM pastes WHERE removal_hash = ? AND removal_hash != ''",
+                        (_hash_token(token),)).fetchone()
+
+@app.route('/remove/<string:token>', methods=['GET', 'POST'])
+def remove_paste(token):
+    """The removal link: GET asks for confirmation (so link previews can't delete anything),
+    POST removes the paste. The token is the only credential."""
+    if _is_rate_limited(_client_ip(), 'remove', 600, 30):      # only misses count: tokens can't be guessed
+        abort(429, 'Too many attempts. Please wait a few minutes.')
     with _db() as conn:
-        paste = conn.execute('SELECT deletion_token FROM pastes WHERE id = ?', (paste_id,)).fetchone()
-        if not paste:
-            return jsonify({'error': 'Paste not found'}), 404
-        if not isinstance(token, str) or not hmac.compare_digest(paste['deletion_token'] or '', token):
-            return jsonify({'error': 'Invalid deletion token'}), 403
-        _delete_paste(conn, paste_id)
-        conn.commit()
-    return jsonify({'success': True, 'message': 'Paste deleted successfully'})
+        paste = _paste_for_removal(conn, token)
+        if paste is not None and _is_expired(paste['expires_at']):
+            _delete_paste(conn, paste['id'])
+            conn.commit()
+            paste = None
+        if paste is None:
+            _record_hit(_client_ip(), 'remove')
+            abort(404)
+        if request.method == 'POST':
+            _delete_paste(conn, paste['id'])
+            conn.commit()
+            return render_template('removed.html', title=paste['title'])
+    return render_template('remove.html', paste=paste, snippet=_snippet(paste['content'], 300))
 
 @app.route('/<string:paste_id>')
 def view_paste(paste_id):
@@ -788,7 +863,11 @@ def view_paste(paste_id):
         conn.commit()
     content = paste['content']
     lines = content.count('\n') + (0 if content.endswith('\n') else 1)
+    cookie = request.cookies.get('removal', '')
+    owner = bool(cookie) and len(cookie) < 200 and bool(paste['removal_hash']) \
+        and hmac.compare_digest(_hash_token(cookie), paste['removal_hash'])
     return render_template('view.html', paste=paste, comments=_comment_tree(rows),
+                           removal_token=cookie if owner else None,
                            comment_count=len(rows), prism_lang=_prism_language(paste['language']),
                            line_count=lines, size=_human_size(len(content.encode('utf-8'))))
 

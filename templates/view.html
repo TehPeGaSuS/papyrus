@@ -14,7 +14,7 @@
 <a id="rawBtn" class="nav-btn" href="{{ url_for('view_paste_raw', paste_id=paste.id) }}" target="_blank" rel="noopener">Raw</a>
 <button id="copyBtn" class="nav-btn">Copy</button>
 <button id="downloadBtn" class="nav-btn">Download</button>
-<button id="deleteBtn" class="nav-btn nav-btn-danger" style="display:none">Delete</button>
+{% if removal_token %}<a href="{{ url_for('remove_paste', token=removal_token) }}" class="nav-btn nav-btn-danger" title="You created this paste">Remove now</a>{% endif %}
 {% if reports_enabled %}<a href="{{ url_for('report', paste_id=paste.id) }}" class="nav-btn" title="Report this paste to the administrator">Report</a>{% endif %}
 <a href="{{ url_for('index') }}" class="nav-btn nav-btn-save">New</a>
 {% if cfg.theme.allow_user_toggle %}
@@ -41,6 +41,11 @@
 {% endmacro %}
 
 {% block content %}
+{% if removal_token and request.args.get('created') %}<div class="notice" role="status">
+    Paste created. To remove it from another device, keep this link:
+    <input type="text" id="removalUrl" class="removal-url" readonly value="{{ url_for('remove_paste', token=removal_token, _external=True) }}" aria-label="Removal link">
+    <button type="button" id="copyRemoval" class="nav-btn">Copy</button>
+</div>{% endif %}
 {% if request.args.get('reported') %}<div class="notice" role="status">Thanks, your report was sent to the administrator.</div>{% endif %}
 <div class="file-header">
     <span class="file-name">{{ paste.filename or 'untitled' }}</span>

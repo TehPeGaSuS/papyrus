@@ -11,7 +11,7 @@ document.addEventListener('DOMContentLoaded', () => {
     initLineNumbers();
     initWordWrap();
     initDiscussions();
-    initDeletion();
+    initRemovalLink();
 });
 
 function pasteMeta() {
@@ -100,42 +100,18 @@ async function downloadPaste() {
     URL.revokeObjectURL(url);
 }
 
-function initDeletion() {
-    const pasteId = pasteMeta().pasteId;
-    const token = localStorage.getItem('del_' + pasteId);
-    const deleteBtn = document.getElementById('deleteBtn');
-
-    if (token && deleteBtn) {
-        deleteBtn.style.display = 'inline-block';
-        deleteBtn.addEventListener('click', async () => {
-            if (!confirm('Are you sure you want to delete this paste? This action cannot be undone.')) return;
-            
-            deleteBtn.disabled = true;
-            deleteBtn.textContent = '...';
-            
-            try {
-                const resp = await fetch('/api/delete/' + pasteId, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ token })
-                });
-                const result = await resp.json();
-                if (result.success) {
-                    localStorage.removeItem('del_' + pasteId);
-                    window.location.href = '/';
-                } else {
-                    alert('Error: ' + (result.error || 'Unknown error'));
-                    deleteBtn.disabled = false;
-                    deleteBtn.textContent = 'Delete';
-                }
-            } catch (err) {
-                console.error(err);
-                alert('Failed to delete paste. Connection error.');
-                deleteBtn.disabled = false;
-                deleteBtn.textContent = 'Delete';
-            }
-        });
-    }
+function initRemovalLink() {
+    const copy = document.getElementById('copyRemoval');
+    const field = document.getElementById('removalUrl');
+    if (!copy || !field) return;
+    field.addEventListener('focus', () => field.select());
+    copy.addEventListener('click', async () => {
+        const ok = await copyToClipboard(field.value);
+        const label = copy.textContent;
+        copy.textContent = ok ? 'Copied!' : 'Press Ctrl+C';
+        if (!ok) field.select();
+        setTimeout(() => { copy.textContent = label; }, 1500);
+    });
 }
 
 // ── Line highlight / linking ──────────────────────────────────────────────────

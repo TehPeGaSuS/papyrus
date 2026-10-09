@@ -221,8 +221,7 @@ document.addEventListener('DOMContentLoaded', function () {
                 submitBtn.textContent = 'Save';
                 return;
             }
-            if (result.deletion_token) store.set('del_' + result.paste_id, result.deletion_token);
-            window.location.href = result.url;
+            window.location.href = result.url + '?created=1';   // the removal cookie is already set
         } catch (err) {
             console.error(err);
             alert('Failed to create paste. Try again.');

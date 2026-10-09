@@ -1,0 +1,18 @@
+{% extends "base.html" %}
+
+{% block title %}Paste removed — {{ cfg.site.name }}{% endblock %}
+
+{% block nav_actions %}
+<a href="{{ url_for('index') }}" class="nav-btn nav-btn-save">New</a>
+{% if cfg.theme.allow_user_toggle %}
+<button id="themeToggle" class="theme-toggle">🌙</button>
+{% endif %}
+{% endblock %}
+
+{% block content %}
+<div class="report-box">
+    <h1>Paste removed</h1>
+    <p class="report-target"><em>{{ title }}</em> and everything attached to it are gone.</p>
+    <a href="{{ url_for('index') }}" class="nav-btn nav-btn-save">Create a new paste</a>
+</div>
+{% endblock %}

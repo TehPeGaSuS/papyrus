@@ -105,21 +105,39 @@ WantedBy=multi-user.target
 `curl` works without a browser:
 
 ```bash
-curl --data-binary @file.py 'https://host/create?filename=file.py&title=notes&expires_in=1day'
-# prints the paste URL; the deletion token is in the X-Deletion-Token response header
-curl https://host/raw/<id>
+$ echo "your text" | curl -X POST https://host/curl -F 'raw=<-'
+Paste URL:   https://host/3f9c1a7e2b4d
+Raw URL:     https://host/raw/3f9c1a7e2b4d
+Removal URL: https://host/remove/DQMUUD4K5ZIRTT62HLC26SPQD4
+
+$ curl -X POST https://host/curl -F 'raw=<file.py' -F filename=file.py -F expires_in=1day
+$ curl --data-binary @file.py 'https://host/create?filename=file.py&title=notes'   # same output
 ```
+
+Optional form fields for `/curl`: `filename` (picks the syntax highlighting), `title` (the description),
+`language`, `expires_in` and `discussions`.
+
+**Removing a paste.** The Removal URL is the only thing that removes it, so keep it. Opening it asks
+"Remove this paste?" and nothing happens until you confirm, so a link preview can't delete anything; with
+`curl`, `curl -X POST <Removal URL>` removes it. In a browser you don't need the link: the browser that
+created the paste keeps a cookie, so the page shows **Remove now** to that browser whenever you come back
+(after a refresh, a closed tab or a restart), until the paste expires. Nobody else sees the button. The
+link is also shown once after saving, for removing the paste from another device.
 
 ## API
 
 - `GET /`: create-paste page
-- `POST /create`: create a paste. JSON (`content`, optional `title` (the description), `filename`, `language`
-  (`auto` or omitted: detected from the filename), `expires_in`, `discussions`) or a plain-text body as above
+- `POST /curl`: create a paste from form fields (`raw`, optional `filename`, `title`, `language`, `expires_in`,
+  `discussions`); prints the paste, raw and removal URLs as plain text
+- `POST /create`: the same from JSON (`content`, optional `title` (the description), `filename`, `language`
+  (`auto` or omitted: detected from the filename), `expires_in`, `discussions`; answers with `paste_id`, `url`,
+  `removal_token`, `removal_url` and sets the owner cookie) or from a plain-text body (prints like `/curl`)
 - `GET /<id>`: view a paste; `GET /raw/<id>`: its content as `text/plain`
 - `POST /<id>/comment`: add a comment (form fields `content`, optional `nick`, optional `parent`, the
   id of the comment being answered; threads deeper than 6 levels are flattened)
 - `POST /api/preview`: render Markdown for the preview tab
-- `POST /api/delete/<id>`: delete a paste with its deletion token
+- `GET|POST /remove/<token>`: the removal link. GET asks for confirmation, POST removes the paste (and its
+  comments and reports). The token is the only credential
 - `GET /recent` (when enabled), `GET /api/languages`
 - `GET|POST /<id>/report` (optional `?comment=<comment id>`): report a paste or a comment
 - Admin: `GET|POST /admin/login`, `POST /admin/logout`, `GET /admin`, `POST /admin/delete/<id>`,
@@ -139,7 +157,7 @@ CREATE TABLE pastes (
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     expires_at TEXT,               -- ISO-8601 UTC, NULL = never
     views INTEGER DEFAULT 0,
-    deletion_token TEXT,
+    removal_hash TEXT NOT NULL DEFAULT '',   -- sha256 of the removal token, never the token itself
     discussions_enabled INTEGER DEFAULT 0
 );
 CREATE TABLE comments (

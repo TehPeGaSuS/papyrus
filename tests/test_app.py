@@ -37,6 +37,13 @@ def create(client, **extra):
     return r.get_json()
 
 
+def curl_urls(response):
+    """Parse the three lines `curl` prints: {'Paste URL': ..., 'Raw URL': ..., 'Removal URL': ...}."""
+    lines = response.get_data(as_text=True).strip().splitlines()
+    assert [l.split(':', 1)[0] for l in lines] == ['Paste URL', 'Raw URL', 'Removal URL'], lines
+    return {l.split(':', 1)[0]: l.split(':', 1)[1].strip() for l in lines}
+
+
 def db():
     conn = sqlite3.connect(papyrus.DATABASE)
     conn.row_factory = sqlite3.Row
@@ -120,15 +127,12 @@ def test_same_origin(client, headers, ok):
 
 # ── Deletion token ────────────────────────────────────────────────────────────
 
-def test_delete_requires_matching_token(client):
+def test_removal_link_needs_the_right_token(client):
     made = create(client)
-    pid = made['paste_id']
-    bad = client.post(f'/api/delete/{pid}', json={'token': 'nope'}, headers=ORIGIN)
-    assert bad.status_code == 403
-    nontext = client.post(f'/api/delete/{pid}', json={'token': 123}, headers=ORIGIN)
-    assert nontext.status_code == 403
-    good = client.post(f'/api/delete/{pid}', json={'token': made['deletion_token']}, headers=ORIGIN)
-    assert good.status_code == 200
+    pid, token = made['paste_id'], made['removal_token']
+    assert client.post('/remove/not-the-token').status_code == 404
+    assert client.get(f'/{pid}').status_code == 200
+    assert client.post(f'/remove/{token}').status_code == 200
     assert client.get(f'/{pid}').status_code == 404
 
 
@@ -263,10 +267,10 @@ def test_curl_style_create(client):
     r = client.post('/create?title=notes&language=python&expires_in=1day',
                     data='print(1)\n', content_type='text/plain')
     assert r.status_code == 200
-    url = r.get_data(as_text=True).strip()
-    pid = url.rsplit('/', 1)[1]
-    assert url == f'http://localhost/{pid}'
-    assert r.headers['X-Deletion-Token']
+    urls = curl_urls(r)
+    pid = urls['Paste URL'].rsplit('/', 1)[1]
+    assert urls['Paste URL'] == f'http://localhost/{pid}' and urls['Raw URL'] == f'http://localhost/raw/{pid}'
+    assert 'X-Deletion-Token' not in r.headers          # the removal URL replaced the header
     assert client.get(f'/raw/{pid}').get_data(as_text=True) == 'print(1)\n'
     row = db().execute('SELECT title, language, expires_at FROM pastes WHERE id=?', (pid,)).fetchone()
     assert (row['title'], row['language']) == ('notes', 'python') and row['expires_at']
@@ -361,10 +365,9 @@ def test_preview_endpoint(client):
 
 def test_deleting_a_paste_deletes_its_comments(client):
     made = create(client, discussions=True)
-    pid = made['paste_id']
-    comment(client, pid, 'hi')
+    comment(client, made['paste_id'], 'hi')
     assert db().execute('SELECT COUNT(*) FROM comments').fetchone()[0] == 1
-    client.post(f'/api/delete/{pid}', json={'token': made['deletion_token']}, headers=ORIGIN)
+    client.post(f"/remove/{made['removal_token']}")
     assert db().execute('SELECT COUNT(*) FROM comments').fetchone()[0] == 0
 
 
@@ -531,7 +534,7 @@ def test_any_utf8_text_is_still_accepted(client):
     text = 'héllo wörld \u2603 \U0001F600\n\tindented\r\n<svg xmlns="http://www.w3.org/2000/svg"/>'
     r = client.post('/create', data=text.encode('utf-8'), content_type='text/plain; charset=utf-8')
     assert r.status_code == 200
-    pid = r.get_data(as_text=True).strip().rsplit('/', 1)[1]
+    pid = curl_urls(r)['Paste URL'].rsplit('/', 1)[1]
     assert client.get(f'/raw/{pid}').get_data(as_text=True) == text
 
 
@@ -742,7 +745,7 @@ def test_deleting_or_expiring_a_paste_removes_its_reports(client):
     keep = create(client)['paste_id']
     report(client, made['paste_id'])
     report(client, keep)
-    client.post(f"/api/delete/{made['paste_id']}", json={'token': made['deletion_token']}, headers=ORIGIN)
+    client.post(f"/remove/{made['removal_token']}")
     assert [r['paste_id'] for r in report_rows()] == [keep]
     past = (datetime.datetime.now(UTC) - datetime.timedelta(minutes=1)).isoformat()
     conn = db()
@@ -909,7 +912,7 @@ def test_hostile_filename_is_reduced_to_a_name(client):
 
 def test_curl_upload_accepts_a_filename(client):
     r = client.post('/create?filename=script.rb', data=b'puts 1\n', content_type='text/plain')
-    pid = r.get_data(as_text=True).strip().rsplit('/', 1)[1]
+    pid = curl_urls(r)['Paste URL'].rsplit('/', 1)[1]
     assert (stored(pid)['filename'], stored(pid)['language']) == ('script.rb', 'ruby')
 
 
@@ -980,3 +983,208 @@ def test_nothing_is_saved_in_the_browser_while_typing(client):
     assert "setItem('paste_draft'" not in js and 'saveDraft' not in js and 'loadDraft' not in js
     features = client.get('/api/config').get_json()['features']
     assert 'auto_save_draft' not in features and 'draft_max_age_days' not in features
+
+
+# ── Removal links, the owner cookie and the curl endpoint (pinnwand-style) ─────
+
+def fresh_client():
+    return papyrus.app.test_client()
+
+
+def test_curl_endpoint_prints_paste_raw_and_removal_urls(client):
+    r = client.post('/curl', data={'raw': 'print(1)\n', 'filename': 'a.py', 'expires_in': '1day'},
+                    content_type='multipart/form-data')       # what `curl -F 'raw=<-'` sends
+    assert r.status_code == 200 and r.mimetype == 'text/plain'
+    urls = curl_urls(r)
+    pid = urls['Paste URL'].rsplit('/', 1)[1]
+    assert urls['Raw URL'] == f'http://localhost/raw/{pid}'
+    assert urls['Removal URL'].startswith('http://localhost/remove/') and pid not in urls['Removal URL']
+    assert client.get(f'/raw/{pid}').get_data(as_text=True) == 'print(1)\n'
+    assert (stored(pid)['filename'], stored(pid)['language']) == ('a.py', 'python')
+    assert 'Set-Cookie' not in r.headers                          # no browser, no cookie
+    assert client.post(urls['Removal URL'].replace('http://localhost', '')).status_code == 200
+    assert client.get(f'/{pid}').status_code == 404
+
+
+def test_curl_endpoint_also_takes_a_urlencoded_form(client):
+    r = client.post('/curl', data={'raw': 'x', 'title': 'T', 'expiry': '1week'})
+    assert r.status_code == 200 and curl_urls(r)
+    row = db().execute('SELECT title, expires_at FROM pastes').fetchone()
+    assert row['title'] == 'T' and row['expires_at']
+
+
+def test_curl_endpoint_errors_are_plain_text(client):
+    r = client.post('/curl', data={})
+    assert (r.status_code, r.mimetype) == (400, 'text/plain') and 'content' in r.get_data(as_text=True)
+    r = client.post('/curl', data={'raw': 'a\x00b'})
+    assert r.status_code == 415 and r.mimetype == 'text/plain'
+    assert db().execute('SELECT COUNT(*) FROM pastes').fetchone()[0] == 0
+
+
+def test_curl_endpoint_takes_pastes_up_to_the_size_limit(client):
+    big = 'x' * (1024 * 1024)                                       # far beyond Werkzeug's 500 kB form default
+    assert client.post('/curl', data={'raw': big}, content_type='multipart/form-data').status_code == 200
+    too_big = 'x' * (papyrus.MAX_PASTE_BYTES + 10)
+    r = client.post('/curl', data={'raw': too_big}, content_type='multipart/form-data')
+    assert r.status_code == 413 and r.get_data(as_text=True).strip() == 'Paste too large'
+
+
+def test_curl_endpoint_shares_the_creation_rate_limit(client):
+    for _ in range(10):
+        assert client.post('/curl', data={'raw': 'x'}).status_code == 200
+    r = client.post('/curl', data={'raw': 'x'})
+    assert r.status_code == 429 and r.mimetype == 'text/plain'
+    assert client.post('/create', json={'content': 'x'}).status_code == 429
+
+
+def test_json_create_returns_the_removal_link_and_sets_the_owner_cookie(client, monkeypatch):
+    r = client.post('/create', json={'content': 'x', 'expires_in': '1hour'})
+    made = r.get_json()
+    assert made['removal_url'] == f"/remove/{made['removal_token']}" and 'deletion_token' not in made
+    cookie = r.headers['Set-Cookie']
+    assert f"removal={made['removal_token']}" in cookie
+    assert 'HttpOnly' in cookie and 'SameSite=Lax' in cookie and f"Path=/{made['paste_id']}" in cookie
+    max_age = int(re.search(r'Max-Age=(\d+)', cookie).group(1))
+    assert 3500 < max_age <= 3600                                  # persistent, until the paste expires
+    monkeypatch.setitem(papyrus._pastes, 'allow_expiry_options', ['1hour', 'never'])
+    never = client.post('/create', json={'content': 'x', 'expires_in': 'never'}).headers['Set-Cookie']
+    assert int(re.search(r'Max-Age=(\d+)', never).group(1)) == 365 * 86400
+
+
+def test_owner_keeps_the_remove_now_button_across_visits(client):
+    made = create(client)
+    pid, token = made['paste_id'], made['removal_token']
+    for _ in range(3):                                             # refresh, reopen: the cookie stays
+        html = client.get(f'/{pid}').get_data(as_text=True)
+        assert 'Remove now' in html and f'href="/remove/{token}"' in html
+
+
+def test_other_visitors_never_see_the_button_or_the_token(client):
+    made = create(client)
+    pid, token = made['paste_id'], made['removal_token']
+    other = fresh_client()
+    html = other.get(f'/{pid}').get_data(as_text=True)
+    assert 'Remove now' not in html and token not in html
+    assert token not in other.get(f'/{pid}?created=1').get_data(as_text=True)
+
+
+def test_a_wrong_or_borrowed_cookie_shows_nothing(client):
+    a, b = create(client), create(client)
+    thief = fresh_client()
+    thief.set_cookie('removal', a['removal_token'], path=f"/{b['paste_id']}")   # a's token on b's paste
+    assert 'Remove now' not in thief.get(f"/{b['paste_id']}").get_data(as_text=True)
+    thief.set_cookie('removal', 'x' * 500, path=f"/{a['paste_id']}")
+    assert 'Remove now' not in thief.get(f"/{a['paste_id']}").get_data(as_text=True)
+
+
+def test_created_notice_with_the_removal_link_is_for_the_owner_only(client):
+    made = create(client)
+    pid, token = made['paste_id'], made['removal_token']
+    html = client.get(f'/{pid}?created=1').get_data(as_text=True)
+    assert 'Paste created.' in html and f'value="http://localhost/remove/{token}"' in html
+    assert 'id="copyRemoval"' in html
+    assert 'Paste created.' not in client.get(f'/{pid}').get_data(as_text=True)
+
+
+def test_opening_the_removal_link_only_asks(client):
+    made = create(client, title='My <b>paste</b>', content='some   text\nhere')
+    token = made['removal_token']
+    page = fresh_client().get(f'/remove/{token}')                  # a link previewer, or a curious click
+    html = page.get_data(as_text=True)
+    assert page.status_code == 200 and 'Remove this paste?' in html
+    assert 'My &lt;b&gt;paste&lt;/b&gt;' in html and 'some text here' in html
+    assert '<form method="post"' in html and 'Remove now' in html
+    assert client.get(f"/{made['paste_id']}").status_code == 200   # nothing was deleted
+    assert client.head(f'/remove/{token}').status_code == 200
+    assert client.get(f"/{made['paste_id']}").status_code == 200
+
+
+def test_removing_through_the_link_needs_no_cookie_and_cleans_up(client):
+    made = create(client, discussions=True)
+    pid, token = made['paste_id'], made['removal_token']
+    comment(client, pid, 'hi')
+    report(client, pid)
+    stranger = fresh_client()                                     # other device, no cookie, no Origin header
+    r = stranger.post(f'/remove/{token}')
+    assert r.status_code == 200 and 'Paste removed' in r.get_data(as_text=True)
+    assert client.get(f'/{pid}').status_code == 404
+    assert db().execute('SELECT COUNT(*) FROM comments').fetchone()[0] == 0 and report_rows() == []
+    assert stranger.post(f'/remove/{token}').status_code == 404    # already gone
+    assert stranger.get(f'/remove/{token}').status_code == 404
+
+
+def test_bad_removal_tokens_get_a_404(client):
+    create(client)
+    for token in ('nope', 'x' * 201, '%20', '.', 'a' * 10):
+        assert client.get(f'/remove/{token}').status_code == 404, token
+        assert client.post(f'/remove/{token}').status_code == 404, token
+    assert db().execute('SELECT COUNT(*) FROM pastes').fetchone()[0] == 1
+
+
+def test_removal_of_an_expired_paste_is_a_404(client):
+    made = create(client)
+    past = (datetime.datetime.now(UTC) - datetime.timedelta(minutes=1)).isoformat()
+    conn = db()
+    conn.execute('UPDATE pastes SET expires_at=?', (past,))
+    conn.commit()
+    assert client.get(f"/remove/{made['removal_token']}").status_code == 404
+    assert db().execute('SELECT COUNT(*) FROM pastes').fetchone()[0] == 0
+
+
+def test_guessing_removal_tokens_is_rate_limited(client):
+    made = create(client)
+    codes = [client.get(f'/remove/guess{i}').status_code for i in range(31)]
+    assert codes[:30] == [404] * 30 and codes[30] == 429
+    assert client.get(f"/remove/{made['removal_token']}").status_code == 429     # this visitor is locked out for now
+    other = {'X-Forwarded-For': '203.0.113.5'}
+    assert client.get(f"/remove/{made['removal_token']}", headers=other).status_code == 200
+
+
+def test_removal_tokens_are_stored_only_as_hashes(client):
+    made = create(client)
+    row = db().execute('SELECT * FROM pastes').fetchone()
+    assert re.fullmatch(r'[0-9a-f]{64}', row['removal_hash'])
+    assert made['removal_token'] not in ' '.join(str(v) for v in tuple(row))
+    assert row['removal_hash'] == papyrus._hash_token(made['removal_token'])
+
+
+def test_the_old_json_delete_endpoint_is_gone(client):
+    made = create(client)
+    r = client.post(f"/api/delete/{made['paste_id']}", json={'token': made['removal_token']}, headers=ORIGIN)
+    assert r.status_code == 404
+    assert client.get(f"/{made['paste_id']}").status_code == 200
+
+
+def test_plaintext_deletion_tokens_from_older_databases_are_hashed_and_keep_working(tmp_path, monkeypatch):
+    path = str(tmp_path / 'old.db')
+    conn = sqlite3.connect(path)
+    conn.executescript("""
+        CREATE TABLE pastes (id TEXT PRIMARY KEY, title TEXT NOT NULL DEFAULT 'Untitled', content TEXT NOT NULL,
+            language TEXT NOT NULL DEFAULT 'text', created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            expires_at TEXT, views INTEGER DEFAULT 0, deletion_token TEXT, discussions_enabled INTEGER DEFAULT 0);
+        INSERT INTO pastes (id, content, deletion_token) VALUES ('a0b0c0d0e0f1', 'one', 'old-plain-token');
+        INSERT INTO pastes (id, content, deletion_token) VALUES ('a0b0c0d0e0f2', 'two', NULL);
+    """)
+    conn.commit()
+    conn.close()
+    monkeypatch.setattr(papyrus, 'DATABASE', path)
+    monkeypatch.setattr(papyrus, '_db_initialized', False)
+    monkeypatch.setattr(papyrus, '_cleanup_running', True)
+    papyrus.init_db()
+    conn = sqlite3.connect(path)
+    cols = {r[1] for r in conn.execute('PRAGMA table_info(pastes)')}
+    assert 'removal_hash' in cols and 'deletion_token' not in cols
+    rows = dict(conn.execute('SELECT id, removal_hash FROM pastes'))
+    assert rows['a0b0c0d0e0f1'] == papyrus._hash_token('old-plain-token') and rows['a0b0c0d0e0f2'] == ''
+    assert 'old-plain-token' not in str(rows)
+    c = papyrus.app.test_client()
+    assert c.get('/remove/old-plain-token').status_code == 200          # the token people already hold still works
+    assert c.post('/remove/old-plain-token').status_code == 200
+    assert sqlite3.connect(path).execute('SELECT COUNT(*) FROM pastes').fetchone()[0] == 1
+    assert c.get('/remove/').status_code == 404
+
+
+def test_no_script_ever_sees_a_removal_token(client):
+    js = ''.join(open(os.path.join(os.path.dirname(papyrus.__file__), 'static', 'js', f), encoding='utf-8').read()
+                 for f in ('app.js', 'paste_create.js', 'paste_view.js'))
+    assert 'localStorage.setItem(\'del_' not in js and 'removal_token' not in js and 'deletion_token' not in js

@@ -664,3 +664,9 @@ a.comment-reply:hover { text-decoration: underline; color: var(--primary); }
 }
 .file-name { font-weight: 600; font-size: 0.85rem; color: var(--text); word-break: break-all; }
 .file-meta { font-size: 0.75rem; color: var(--text-muted); }
+
+.notice .removal-url {
+    width: min(28rem, 100%); margin: 0 0.5rem; padding: 0.2rem 0.5rem;
+    background: var(--bg); border: 1px solid var(--border); border-radius: var(--radius);
+    color: var(--text); font-family: var(--mono); font-size: 0.75rem;
+}
