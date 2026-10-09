@@ -67,6 +67,9 @@ body {
     width: 100%;
 }
 .brand {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
     font-weight: 700;
     color: var(--primary);
     text-decoration: none;
@@ -75,6 +78,7 @@ body {
     margin-right: 0.5rem;
 }
 .brand:hover { color: var(--primary-h); }
+.brand-logo { display: block; width: 28px; height: 28px; }
 
 .nav-links {
     display: flex;

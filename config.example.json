@@ -4,7 +4,6 @@
   "site": {
     "name": "Papyrus",
     "tagline": "Simple, fast pastes with Markdown discussions.",
-    "brand_icon": "📋",
     "footer_text": "Simple, fast, and reliable.",
     "base_url": ""
   },

@@ -222,7 +222,7 @@ def set_security_headers(response):
         "default-src 'self'; "
         f"script-src 'self' https://cdnjs.cloudflare.com 'nonce-{nonce}'; "
         "style-src 'self' https://cdnjs.cloudflare.com 'unsafe-inline'; "
-        "img-src 'none'; "  # text only: the site never shows an image
+        "img-src 'self'; "  # our own logo/favicon only; no user-supplied image can load
         "connect-src 'self'; "
         "object-src 'none'; "
         "base-uri 'self'; "
@@ -578,8 +578,8 @@ def index():
 
 @app.route('/favicon.ico')
 def favicon():
-    # Papyrus serves no images; answer the browser's automatic request quietly.
-    return '', 204
+    # Browsers and crawlers ask for this path directly, whatever the <link> tags say.
+    return app.send_static_file('favicon.ico')
 
 @app.route('/create', methods=['POST'])
 def create_paste():
@@ -694,7 +694,6 @@ def get_client_config():
         'site': {
             'name':        _site.get('name', 'Papyrus'),
             'tagline':     _site.get('tagline', ''),
-            'brand_icon':  _site.get('brand_icon', ''),
             'footer_text': _site.get('footer_text', ''),
         },
         'theme': {

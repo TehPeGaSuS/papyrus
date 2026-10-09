@@ -1,5 +1,6 @@
 import datetime
 import os
+import re
 import sqlite3
 import sys
 
@@ -491,16 +492,22 @@ def test_comments_table_gains_parent_id_column(tmp_path, monkeypatch):
 PNG = b'\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01\x08\x06\x00\x00\x00'
 
 
-def test_csp_forbids_images(client):
+def test_csp_only_allows_images_from_our_own_origin(client):
     csp = client.get('/').headers['Content-Security-Policy']
-    assert "img-src 'none'" in csp and 'data:' not in csp
+    directives = {d.split()[0]: d.split()[1:] for d in (x.strip() for x in csp.split(';')) if d}
+    assert directives['img-src'] == ["'self'"]      # no data:, no https:, no wildcard
 
 
-def test_pages_reference_no_images(client):
+def test_pages_show_only_our_own_logo(client):
     pid = create(client, discussions=True)['paste_id']
+    comment(client, pid, '![tracker](http://tracker.example/p.png) <img src=http://evil.example/x.png>')
     for path in ('/', f'/{pid}'):
         html = client.get(path).get_data(as_text=True)
-        assert '<img' not in html and 'rel="icon"' not in html and 'favicon' not in html
+        imgs = re.findall(r'<img\b[^>]*>', html)
+        assert len(imgs) == 1 and 'src="/static/img/logo-64.png"' in imgs[0]   # the navbar mark, nothing else
+    page = client.get(f'/{pid}').get_data(as_text=True)
+    assert 'href="http://tracker.example/p.png"' in page        # a Markdown image became a link
+    assert '<img src=http://evil.example' not in page            # raw HTML stayed escaped text
 
 
 def test_binary_upload_is_rejected(client):
@@ -533,6 +540,16 @@ def test_raw_responses_cannot_be_sniffed_as_images(client):
     assert r.mimetype == 'text/plain' and r.headers['X-Content-Type-Options'] == 'nosniff'
 
 
-def test_favicon_request_gets_an_empty_204(client):
-    r = client.get('/favicon.ico')
-    assert r.status_code == 204 and r.data == b''
+def test_logo_assets_are_served(client):
+    for path, kind in [('/favicon.ico', 'image/'), ('/static/favicon.ico', 'image/'),
+                       ('/static/img/logo-64.png', 'image/png'),
+                       ('/static/img/favicon-32.png', 'image/png'),
+                       ('/static/img/apple-touch-icon.png', 'image/png')]:
+        r = client.get(path)
+        assert r.status_code == 200 and r.mimetype.startswith(kind) and len(r.data) > 100, path
+
+
+def test_head_links_point_at_the_icons(client):
+    html = client.get('/').get_data(as_text=True)
+    for fragment in ('rel="icon" href="/static/favicon.ico"', 'img/favicon-32.png', 'img/apple-touch-icon.png'):
+        assert fragment in html

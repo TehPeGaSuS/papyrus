@@ -24,12 +24,15 @@
     <link href="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/plugins/line-numbers/prism-line-numbers.min.css"
         rel="stylesheet" crossorigin="anonymous">
     <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+    <link rel="icon" href="{{ url_for('static', filename='favicon.ico') }}" sizes="any">
+    <link rel="icon" type="image/png" sizes="32x32" href="{{ url_for('static', filename='img/favicon-32.png') }}">
+    <link rel="apple-touch-icon" href="{{ url_for('static', filename='img/apple-touch-icon.png') }}">
 </head>
 
 <body>
     <nav class="navbar">
         <div class="nav-content">
-            <a href="{{ url_for('index') }}" class="brand">{{ cfg.site.name }}</a>
+            <a href="{{ url_for('index') }}" class="brand"><img src="{{ url_for('static', filename='img/logo-64.png') }}" alt="" width="28" height="28" class="brand-logo">{{ cfg.site.name }}</a>
             <div class="nav-links">
                 {% block nav_actions %}
                 <a href="{{ url_for('index') }}" class="nav-btn">New</a>
