@@ -791,7 +791,7 @@ def _prism_language(language):
 
 @app.route('/')
 def index():
-    return render_template('index.html', language_hints=_language_hints(),
+    return render_template('index.html', language_hints=_language_hints(), max_paste_bytes=MAX_PASTE_BYTES,
                            expiry_options=_EXPIRY_OPTIONS, default_expiry=_DEFAULT_EXPIRY)
 
 @app.route('/theme.css')
@@ -1330,6 +1330,7 @@ def _server_options(host, port, workers, pidfile=None):
         'max_requests':       1000,   # recycle workers to bound memory growth
         'max_requests_jitter': 100,
         'timeout':            60,
+        'graceful_timeout':   8,      # on stop, finish running requests, but don't wait for idle connections
         'keepalive':          5,
         'accesslog':          '-',
         'errorlog':           '-',
@@ -1436,6 +1437,8 @@ def _start_in_background(host, port, workers):
     print(f'Started (PID {proc.pid}) at http://{host}:{port}\nLog: {_LOG_FILE}')
 
 
+_STOP_GRACE_SECONDS = 12   # a little longer than Gunicorn's graceful_timeout
+
 def cmd_stop():
     pid = _read_pid()
     if not pid or not _alive(pid):
@@ -1443,13 +1446,19 @@ def cmd_stop():
         if pid:
             os.remove(_PID_FILE)
         return
-    os.kill(pid, signal.SIGTERM)  # Gunicorn treats SIGTERM as a graceful shutdown
-    for _ in range(100):
-        time.sleep(0.1)
-        if not _alive(pid):
-            break
-    else:
-        sys.exit(f'PID {pid} did not exit within 10 seconds; stop it manually (kill -9 {pid}).')
+    def wait_for_exit(seconds):
+        for _ in range(int(seconds * 10)):
+            time.sleep(0.1)
+            if not _alive(pid):
+                return True
+        return False
+
+    os.kill(pid, signal.SIGTERM)  # Gunicorn: graceful shutdown (running requests finish, within graceful_timeout)
+    if not wait_for_exit(_STOP_GRACE_SECONDS):
+        print('Still draining connections, forcing the shutdown ...', file=sys.stderr)
+        os.kill(pid, signal.SIGQUIT)  # Gunicorn: quick shutdown
+        if not wait_for_exit(5):
+            sys.exit(f'PID {pid} did not exit; stop it manually (kill -9 {pid}).')
     try:
         os.remove(_PID_FILE)
     except FileNotFoundError:

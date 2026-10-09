@@ -1686,3 +1686,25 @@ def test_preview_markup_is_in_the_script_and_stylesheet():
     css = open(os.path.join(root, 'static', 'css', 'style.css'), encoding='utf-8').read()
     assert 'initMarkdownPreview' in js and 'initMarkdownPreview();' in js
     assert 'body.previewing .view-full' in css and 'body.previewing .nav-label' in css
+
+
+# ── Loading a text file into the editor ───────────────────────────────────────
+
+def test_editor_page_offers_loading_a_file(client):
+    html = client.get('/').get_data(as_text=True)
+    assert f'data-max-bytes="{papyrus.MAX_PASTE_BYTES}"' in html           # the browser checks the same limit
+    assert 'drop a text file' in re.search(r'placeholder="([^"]*)"\s*spellcheck|placeholder="(Paste[^"]*)"', html).group(0)
+    assert re.search(r'<input type="file" id="openFile" hidden[^>]*>', html) and 'multiple' not in html.split('id="openFile"')[1].split('>')[0]
+    assert '<button type="button" id="openFileBtn" class="link-btn">open a file</button>' in html
+    assert '<span id="fileNote" class="file-note" role="status" aria-live="polite">' in html
+    assert 'Drop a text file on the page' in html
+
+
+def test_file_loading_is_client_side_and_text_only():
+    root = os.path.dirname(papyrus.__file__)
+    js = open(os.path.join(root, 'static', 'js', 'paste_create.js'), encoding='utf-8').read()
+    assert "new TextDecoder('utf-8', { fatal: true })" in js            # invalid UTF-8 is refused, not repaired
+    assert "indexOf('\\u0000')" in js and 'file.size > maxBytes' in js and "execCommand('insertText'" in js
+    assert 'FormData' not in js and "'/upload" not in js               # the file itself is never sent anywhere
+    css = open(os.path.join(root, 'static', 'css', 'style.css'), encoding='utf-8').read()
+    assert '.full-editor.drop-target' in css and '.file-note.error' in css

@@ -42,12 +42,14 @@
 <textarea
     id="content"
     class="full-editor"
-    placeholder="Paste your code or text here…"
+    data-max-bytes="{{ max_paste_bytes }}"
+    placeholder="Paste your code or text here, or drop a text file…"
     spellcheck="false"
     autocomplete="off"
     autocorrect="off"
     autocapitalize="off"></textarea>
-<div class="editor-hint">Tab indents and Shift+Tab outdents. Use <kbd>Control+Shift+M</kbd> to toggle the <kbd>tab</kbd> key moving focus (or press <kbd>Esc</kbd>, then <kbd>Tab</kbd>).</div>
+<div class="editor-hint">Tab indents and Shift+Tab outdents. Use <kbd>Control+Shift+M</kbd> to toggle the <kbd>tab</kbd> key moving focus (or press <kbd>Esc</kbd>, then <kbd>Tab</kbd>). Drop a text file on the page or <button type="button" id="openFileBtn" class="link-btn">open a file</button>. <span id="fileNote" class="file-note" role="status" aria-live="polite"></span></div>
+<input type="file" id="openFile" hidden tabindex="-1" aria-hidden="true">
 <script type="application/json" id="languageHints">{{ language_hints | tojson }}</script>
 {% endblock %}
 

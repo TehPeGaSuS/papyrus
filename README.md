@@ -11,6 +11,8 @@ SQLite for storage, no build step.
   (`![alt](url)`) are shown as plain links, never embedded. The only images the site serves are its
   own logo and icons
 - **Paste and share**: short links (`/<id>`), raw text at `/raw/<id>`, `curl` uploads, download as a file
+- **Load a text file**: drop one on the editor (or use "open a file") and its contents load straight in, with the
+  filename filled in. It stays in your browser until you save; only UTF-8 text up to the size limit is accepted
 - **Gist-style editor**: description, filename (the extension picks the syntax highlighting), indent mode
   (spaces or tabs), indent size (2, 4, 8), no wrap (the default, like GitHub) or soft wrap, Tab/Shift+Tab indenting and auto-indent
 - **Markdown preview**: Markdown pastes (up to 256 KB) get a Source | Preview switch; `?view=preview` links straight to

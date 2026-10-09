@@ -182,6 +182,82 @@ document.addEventListener('DOMContentLoaded', function () {
         if (e.key === 'Enter' && plain && !e.shiftKey && !e.isComposing) autoIndent(e);
     });
 
+    // ── Load a text file into the editor (drop it on the page, or open one) ──
+    // Nothing is uploaded: the browser reads the file and puts its text in the editor, and what gets
+    // saved is the same plain-text paste as ever. Only UTF-8 text up to the paste size limit is accepted.
+    const maxBytes  = parseInt(textarea.dataset.maxBytes, 10) || 2 * 1024 * 1024;
+    const fileInput = $('openFile');
+    const fileNote  = $('fileNote');
+    let noteTimer = null;
+
+    const prettyBytes = n => n < 1024 ? n + ' B' : n < 1024 * 1024 ? (n / 1024).toFixed(1) + ' KB' : (n / 1024 / 1024).toFixed(1) + ' MB';
+    function note(message, isError) {
+        fileNote.textContent = message;
+        fileNote.classList.toggle('error', !!isError);
+        clearTimeout(noteTimer);
+        noteTimer = setTimeout(() => { fileNote.textContent = ''; fileNote.classList.remove('error'); }, isError ? 9000 : 5000);
+    }
+
+    // Replace everything through the browser's editing machinery, so Ctrl+Z brings the old text back.
+    function replaceEditorText(text) {
+        textarea.focus();
+        textarea.select();
+        if (!document.execCommand || !document.execCommand('insertText', false, text)) {
+            textarea.value = text;
+            textarea.dispatchEvent(new Event('input', { bubbles: true }));
+        }
+        textarea.setSelectionRange(0, 0);
+        textarea.scrollTop = 0;
+    }
+
+    async function loadFile(file) {
+        if (file.size === 0) return note('"' + file.name + '" is empty.', true);
+        if (file.size > maxBytes) {
+            return note('"' + file.name + '" is ' + prettyBytes(file.size) + '; pastes are limited to ' + prettyBytes(maxBytes) + '.', true);
+        }
+        let text;
+        try {
+            text = new TextDecoder('utf-8', { fatal: true }).decode(await file.arrayBuffer());
+        } catch (e) {
+            return note('"' + file.name + '" is not a UTF-8 text file, so it was not loaded.', true);
+        }
+        if (text.indexOf('\u0000') !== -1) {
+            return note('"' + file.name + '" looks like a binary file, so it was not loaded.', true);
+        }
+        replaceEditorText(text);
+        if (!filename.value.trim()) {                       // keep a name you typed on purpose
+            filename.value = file.name;
+            filename.dispatchEvent(new Event('input'));     // refreshes the "Auto (language)" label
+        }
+        note('Loaded "' + file.name + '" (' + prettyBytes(file.size) + ').', false);
+    }
+
+    async function handleFiles(files) {
+        if (!files.length) return;
+        await loadFile(files[0]);
+        if (files.length > 1 && !fileNote.classList.contains('error')) {
+            note('Loaded "' + files[0].name + '". A paste holds one file, so ' + (files.length - 1) +
+                 (files.length === 2 ? ' other file was' : ' other files were') + ' ignored.', false);
+        }
+    }
+
+    const carriesFiles = e => !!e.dataTransfer && Array.from(e.dataTransfer.types || []).indexOf('Files') !== -1;
+    ['dragenter', 'dragover'].forEach(type => document.addEventListener(type, e => {
+        if (!carriesFiles(e)) return;                       // dragging text around keeps working as usual
+        e.preventDefault();                                 // also stops the browser from opening the file
+        e.dataTransfer.dropEffect = 'copy';
+        textarea.classList.add('drop-target');
+    }));
+    document.addEventListener('dragleave', e => { if (e.relatedTarget === null) textarea.classList.remove('drop-target'); });
+    document.addEventListener('drop', e => {
+        if (!carriesFiles(e)) return;
+        e.preventDefault();
+        textarea.classList.remove('drop-target');
+        handleFiles(Array.from(e.dataTransfer.files));
+    });
+    $('openFileBtn').addEventListener('click', () => fileInput.click());
+    fileInput.addEventListener('change', () => { handleFiles(Array.from(fileInput.files)); fileInput.value = ''; });
+
     // ── Ctrl/Cmd+S shortcut ──────────────────────────────────────────────────
     document.addEventListener('keydown', e => {
         if ((e.ctrlKey || e.metaKey) && e.key === 's') {

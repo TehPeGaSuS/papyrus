@@ -287,3 +287,50 @@ def test_failed_venv_creation_leaves_no_half_made_venv(env_probe, monkeypatch):
 def test_venv_support_check_reflects_the_interpreter():
     assert papyrus._venv_support_available() in (True, False)
     assert 'apt install python3-venv' in papyrus._venv_support_hint()
+
+
+# ── stopping ──────────────────────────────────────────────────────────────────
+
+def test_gunicorn_drains_quickly_on_stop():
+    assert papyrus._server_options('127.0.0.1', 1027, 2)['graceful_timeout'] == 8
+    assert papyrus._STOP_GRACE_SECONDS > 8                       # stop outwaits the graceful period
+
+
+def stubbed_stop(monkeypatch, tmp_path, dies_on):
+    """Run cmd_stop against a pretend process that exits when it receives one of `dies_on`."""
+    sent, alive = [], {'now': True}
+    pid_file = tmp_path / 'p.pid'
+    pid_file.write_text('4242')
+    monkeypatch.setattr(papyrus, '_PID_FILE', str(pid_file))
+    monkeypatch.setattr(papyrus, '_alive', lambda pid: alive['now'])
+    monkeypatch.setattr(papyrus.time, 'sleep', lambda s: None)
+    def fake_kill(pid, sig):
+        sent.append(sig)
+        if sig in dies_on:
+            alive['now'] = False
+    monkeypatch.setattr(papyrus.os, 'kill', fake_kill)
+    return sent, pid_file
+
+
+def test_stop_is_graceful_first(monkeypatch, tmp_path, capsys):
+    import signal
+    sent, pid_file = stubbed_stop(monkeypatch, tmp_path, dies_on={signal.SIGTERM})
+    papyrus.cmd_stop()
+    assert sent == [signal.SIGTERM] and 'Stopped' in capsys.readouterr().out and not pid_file.exists()
+
+
+def test_stop_forces_a_shutdown_that_lingers(monkeypatch, tmp_path, capsys):
+    import signal
+    sent, pid_file = stubbed_stop(monkeypatch, tmp_path, dies_on={signal.SIGQUIT})
+    papyrus.cmd_stop()
+    assert sent == [signal.SIGTERM, signal.SIGQUIT]
+    out = capsys.readouterr()
+    assert 'forcing the shutdown' in out.err and 'Stopped' in out.out and not pid_file.exists()
+
+
+def test_stop_gives_up_with_a_message_if_nothing_works(monkeypatch, tmp_path):
+    import signal
+    sent, _ = stubbed_stop(monkeypatch, tmp_path, dies_on=set())
+    with pytest.raises(SystemExit) as exc:
+        papyrus.cmd_stop()
+    assert 'kill -9 4242' in str(exc.value) and sent == [signal.SIGTERM, signal.SIGQUIT]
