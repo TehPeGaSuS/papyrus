@@ -1258,3 +1258,19 @@ def test_long_lines_do_not_wrap_by_default(client):
     page = client.get(f'/{pid}').get_data(as_text=True)
     assert 'class="view-full"' in page and 'wrap-lines' not in page.split('id="viewFull"')[0]
     assert not re.search(r'id="wrapToggle"[^>]*checked', page)
+
+
+def test_every_paste_control_lives_in_the_file_bar(client):
+    html = client.get('/').get_data(as_text=True)
+    top_bar, form = html.split('</nav>')
+    # Top bar: logo | description | theme toggle. Nothing else.
+    assert top_bar.index('class="brand"') < top_bar.index('id="title"') < top_bar.index('id="themeToggle"')
+    for control in ('submitBtn', 'clearBtn', 'expires_in', 'allowDiscussions', 'filename', 'language', 'indentMode'):
+        assert control not in top_bar, control
+    # Filename | Language | Indent mode | Indent size | Wrap | Expiry | Allow comments | Clear | Save
+    order = [form.index(f'id="{c}"') for c in ('filename', 'language', 'indentMode', 'indentSize', 'wrapMode',
+                                                 'expires_in', 'allowDiscussions', 'clearBtn', 'submitBtn')]
+    assert order == sorted(order)
+    assert form.index('id="submitBtn"') < form.index('id="content"')       # the bar sits above the editor
+    assert 'Allow comments' in form and not re.search(r'>\s*Discuss\s*<|> Discuss\b', html)   # the old label is gone
+    assert 'Control+Shift+M' in form

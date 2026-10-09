@@ -159,13 +159,21 @@ document.addEventListener('DOMContentLoaded', function () {
         replaceRange(start, end, '\n' + lead + opener);
     }
 
-    // Esc, then Tab, moves focus on: otherwise the editor would trap keyboard users.
+    // The editor must not trap keyboard users: Control+Shift+M switches Tab between indenting and
+    // moving focus (as in the Gist editor), and Esc followed by Tab moves focus once.
+    let tabMovesFocus = false;
     let releaseTab = false;
     textarea.addEventListener('focus', () => { releaseTab = false; });
     textarea.addEventListener('keydown', e => {
+        if (e.ctrlKey && e.shiftKey && !e.altKey && !e.metaKey && e.key.toLowerCase() === 'm') {
+            e.preventDefault();
+            tabMovesFocus = !tabMovesFocus;
+            textarea.classList.toggle('tab-moves-focus', tabMovesFocus);
+            return;
+        }
         if (e.key === 'Escape') { releaseTab = true; return; }
         const plain = !e.ctrlKey && !e.altKey && !e.metaKey;
-        if (e.key === 'Tab' && plain && !releaseTab) {
+        if (e.key === 'Tab' && plain && !releaseTab && !tabMovesFocus) {
             e.preventDefault();
             if (e.shiftKey) outdent(); else indent();
             return;

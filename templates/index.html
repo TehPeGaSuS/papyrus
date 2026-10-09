@@ -4,48 +4,42 @@
 {% block main_class %}full-page{% endblock %}
 
 {% block nav_actions %}
-<select id="expires_in" class="nav-select" title="Expires">
-    {% for opt in expiry_options %}
-    <option value="{{ opt.value }}" {% if opt.value == default_expiry %}selected{% endif %}>{{ opt.label }}</option>
-    {% endfor %}
-</select>
-<label class="nav-label" title="Allow discussions on this paste">
-    <input type="checkbox" id="allowDiscussions"> Discuss
-</label>
-<button id="clearBtn" class="nav-btn">Clear</button>
-<button id="submitBtn" class="nav-btn nav-btn-save">Save</button>
+<input type="text" id="title" class="nav-description" placeholder="Description (optional)" maxlength="100" autocomplete="off" aria-label="Description">
 {% if cfg.theme.allow_user_toggle %}
 <button id="themeToggle" class="theme-toggle">🌙</button>
 {% endif %}
 {% endblock %}
 
 {% block content %}
-<div class="compose-head">
-    <input type="text" id="title" class="compose-description" placeholder="Description (optional)" maxlength="100" autocomplete="off" aria-label="Description">
-</div>
 <div class="editor-bar">
-    <input type="text" id="filename" class="compose-filename" placeholder="Filename including extension (optional), e.g. deploy.sh" maxlength="100" autocomplete="off" spellcheck="false" aria-label="Filename">
+    <input type="text" id="filename" class="compose-filename" placeholder="Filename including extension (optional)" maxlength="100" autocomplete="off" spellcheck="false" aria-label="Filename" title="Filename including extension, e.g. deploy.sh. The extension picks the syntax highlighting.">
     <select id="language" class="nav-select" title="Syntax highlighting" aria-label="Language"></select>
+    <select id="indentMode" class="nav-select" title="Indent mode" aria-label="Indent mode">
+        <option value="spaces">Spaces</option>
+        <option value="tabs">Tabs</option>
+    </select>
+    <select id="indentSize" class="nav-select" title="Indent size" aria-label="Indent size">
+        <option value="2">2</option>
+        <option value="4" selected>4</option>
+        <option value="8">8</option>
+    </select>
+    <select id="wrapMode" class="nav-select" title="Line wrap mode" aria-label="Line wrap mode">
+        <option value="off" selected>No wrap</option>
+        <option value="soft">Soft wrap</option>
+    </select>
     <span class="editor-bar-spacer"></span>
-    <label class="bar-field">Indent mode
-        <select id="indentMode" class="nav-select">
-            <option value="spaces">Spaces</option>
-            <option value="tabs">Tabs</option>
+    <label class="bar-field">Expires
+        <select id="expires_in" class="nav-select" title="How long the paste is kept">
+            {% for opt in expiry_options %}
+            <option value="{{ opt.value }}" {% if opt.value == default_expiry %}selected{% endif %}>{{ opt.label }}</option>
+            {% endfor %}
         </select>
     </label>
-    <label class="bar-field">Indent size
-        <select id="indentSize" class="nav-select">
-            <option value="2">2</option>
-            <option value="4" selected>4</option>
-            <option value="8">8</option>
-        </select>
+    <label class="bar-field" title="Let visitors comment on and reply to this paste">
+        <input type="checkbox" id="allowDiscussions"> Allow comments
     </label>
-    <label class="bar-field">Line wrap mode
-        <select id="wrapMode" class="nav-select">
-            <option value="off" selected>No wrap</option>
-            <option value="soft">Soft wrap</option>
-        </select>
-    </label>
+    <button id="clearBtn" class="nav-btn" type="button">Clear</button>
+    <button id="submitBtn" class="nav-btn nav-btn-save" type="button">Save</button>
 </div>
 <textarea
     id="content"
@@ -55,7 +49,7 @@
     autocomplete="off"
     autocorrect="off"
     autocapitalize="off"></textarea>
-<div class="editor-hint">Tab indents and Shift+Tab outdents. To move focus out of the editor, press Esc and then Tab.</div>
+<div class="editor-hint">Tab indents and Shift+Tab outdents. Use <kbd>Control+Shift+M</kbd> to toggle the <kbd>tab</kbd> key moving focus (or press <kbd>Esc</kbd>, then <kbd>Tab</kbd>).</div>
 <script type="application/json" id="languageHints">{{ language_hints | tojson }}</script>
 {% endblock %}
 
