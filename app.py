@@ -222,7 +222,7 @@ def set_security_headers(response):
         "default-src 'self'; "
         f"script-src 'self' https://cdnjs.cloudflare.com 'nonce-{nonce}'; "
         "style-src 'self' https://cdnjs.cloudflare.com 'unsafe-inline'; "
-        "img-src 'self' data:; "
+        "img-src 'none'; "  # text only: the site never shows an image
         "connect-src 'self'; "
         "object-src 'none'; "
         "base-uri 'self'; "
@@ -576,6 +576,11 @@ def _prism_language(language):
 def index():
     return render_template('index.html')
 
+@app.route('/favicon.ico')
+def favicon():
+    # Papyrus serves no images; answer the browser's automatic request quietly.
+    return '', 204
+
 @app.route('/create', methods=['POST'])
 def create_paste():
     # 10 pastes per 10 minutes per IP address (SQLite backed for worker safety)
@@ -586,8 +591,12 @@ def create_paste():
     #   curl --data-binary @file 'https://host/create?title=x&language=python&expires_in=1day'
     plain_text = request.mimetype == 'text/plain'
     if plain_text:
+        try:
+            body = request.get_data().decode('utf-8')   # strict: binary files are not text
+        except UnicodeDecodeError:
+            return jsonify({'error': 'Only UTF-8 text is accepted'}), 415
         data = {
-            'content':     request.get_data(as_text=True),
+            'content':     body,
             'title':       request.args.get('title'),
             'language':    request.args.get('language'),
             'expires_in':  request.args.get('expires_in', _pastes.get('default_expiry', 'never')),
@@ -603,6 +612,8 @@ def create_paste():
         return jsonify({'error': 'content must be a non-empty string'}), 400
     if len(content.encode('utf-8')) > MAX_PASTE_BYTES:
         return jsonify({'error': 'Paste too large'}), 413
+    if '\x00' in content:  # images and other binary formats are full of NUL bytes
+        return jsonify({'error': 'Only text is accepted'}), 415
 
     title = _clean_title(data.get('title'))
     language = _clean_language(data.get('language'))
@@ -775,6 +786,8 @@ def post_comment(paste_id):
         abort(400, 'A comment cannot be empty.')
     if len(content.encode('utf-8')) > _MAX_COMMENT_BYTES:
         abort(413, 'Comment too large.')
+    if '\x00' in content:
+        abort(415, 'Only text is accepted.')
     nick = _CONTROL_CHARS_RE.sub('', request.form.get('nick') or '').strip()[:_MAX_NICK_LENGTH]
 
     parent_id = (request.form.get('parent') or '').strip() or None

@@ -5,6 +5,8 @@ SQLite for storage, no build step.
 
 ## Features
 
+- **Text only**: no file uploads and no images anywhere. Binary data is rejected, and Markdown
+  images (`![alt](url)`) are shown as plain links, never embedded
 - **Paste and share**: short links (`/<id>`), raw text at `/raw/<id>`, `curl` uploads, download as a file
 - **Syntax highlighting** with Prism.js, line numbers, line-range links (`?L=5-12`), word wrap toggle
 - **Expiry**: 1 hour, 1 day, 1 week, 1 month, 1 year or never (configurable)
@@ -147,7 +149,8 @@ kept, encrypted ones stay in `pastes_encrypted_legacy`.
 
 - Pastes are readable by whoever runs the server; tell your users not to paste secrets.
 - Paste views are server-rendered with Jinja autoescaping. Comments are Markdown with raw HTML
-  escaped and the result sanitised (`nh3`); images are rendered as links, never embedded.
+  escaped and the result sanitised (`nh3`); images are rendered as links, never embedded, and the
+  Content-Security-Policy is `img-src 'none'`, so a browser won't load an image from Papyrus pages.
 - State-changing requests are checked against the request's `Origin`/`Referer`.
 - Per-IP, SQLite-backed rate limits apply to paste creation, comments, previews and failed admin logins.
 - Paste IDs are random and at least 12 hex characters long.

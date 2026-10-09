@@ -484,3 +484,55 @@ def test_comments_table_gains_parent_id_column(tmp_path, monkeypatch):
     conn = sqlite3.connect(path)
     assert 'parent_id' in {r[1] for r in conn.execute('PRAGMA table_info(comments)')}
     assert conn.execute('SELECT content, parent_id FROM comments').fetchone() == ('old comment', None)
+
+
+# ── Text only ─────────────────────────────────────────────────────────────────
+
+PNG = b'\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01\x08\x06\x00\x00\x00'
+
+
+def test_csp_forbids_images(client):
+    csp = client.get('/').headers['Content-Security-Policy']
+    assert "img-src 'none'" in csp and 'data:' not in csp
+
+
+def test_pages_reference_no_images(client):
+    pid = create(client, discussions=True)['paste_id']
+    for path in ('/', f'/{pid}'):
+        html = client.get(path).get_data(as_text=True)
+        assert '<img' not in html and 'rel="icon"' not in html and 'favicon' not in html
+
+
+def test_binary_upload_is_rejected(client):
+    r = client.post('/create', data=PNG, content_type='text/plain')
+    assert r.status_code == 415
+    r = client.post('/create', data=b'valid start \xff\xfe invalid utf-8', content_type='text/plain')
+    assert r.status_code == 415
+    r = client.post('/create', data=PNG, content_type='image/png')   # not JSON either
+    assert r.status_code == 400
+    assert db().execute('SELECT COUNT(*) FROM pastes').fetchone()[0] == 0
+
+
+def test_nul_bytes_are_rejected_in_json_pastes_and_comments(client):
+    assert client.post('/create', json={'content': 'ab\x00cd'}).status_code == 415
+    pid = create(client, discussions=True)['paste_id']
+    assert comment(client, pid, 'a\x00b').status_code == 415
+
+
+def test_any_utf8_text_is_still_accepted(client):
+    text = 'héllo wörld \u2603 \U0001F600\n\tindented\r\n<svg xmlns="http://www.w3.org/2000/svg"/>'
+    r = client.post('/create', data=text.encode('utf-8'), content_type='text/plain; charset=utf-8')
+    assert r.status_code == 200
+    pid = r.get_data(as_text=True).strip().rsplit('/', 1)[1]
+    assert client.get(f'/raw/{pid}').get_data(as_text=True) == text
+
+
+def test_raw_responses_cannot_be_sniffed_as_images(client):
+    pid = create(client, content='GIF89a not really an image')['paste_id']
+    r = client.get(f'/raw/{pid}')
+    assert r.mimetype == 'text/plain' and r.headers['X-Content-Type-Options'] == 'nosniff'
+
+
+def test_favicon_request_gets_an_empty_204(client):
+    r = client.get('/favicon.ico')
+    assert r.status_code == 204 and r.data == b''
