@@ -4,9 +4,14 @@
 {% block main_class %}full-page view-page{% endblock %}
 
 {% block nav_actions %}
-<span id="navPasteTitle" class="nav-paste-title">{{ paste.title }}</span>
-<label class="nav-label" title="Toggle line numbers">
-    <input type="checkbox" id="lineNoToggle" checked> Lines
+{% set has_description = paste.title and paste.title != 'Untitled' and paste.title != paste.filename %}
+<div class="paste-info" title="{{ paste.title }}">
+    {% if has_description %}<span class="paste-description">{{ paste.title }}</span>{% endif %}
+    {% if paste.filename or not has_description %}<span class="file-name">{{ paste.filename or 'untitled' }}</span>{% endif %}
+    <span class="file-meta">{{ paste.language }} &middot; {{ line_count }} line{{ '' if line_count == 1 else 's' }} &middot; {{ size }}</span>
+</div>
+<label class="nav-label" title="Show line numbers">
+    <input type="checkbox" id="lineNoToggle" checked> Show lines
 </label>
 <label class="nav-label" title="Toggle word wrap">
     <input type="checkbox" id="wrapToggle"> Wrap
@@ -47,10 +52,6 @@
     <button type="button" id="copyRemoval" class="nav-btn">Copy</button>
 </div>{% endif %}
 {% if request.args.get('reported') %}<div class="notice" role="status">Thanks, your report was sent to the administrator.</div>{% endif %}
-<div class="file-header">
-    <span class="file-name">{{ paste.filename or 'untitled' }}</span>
-    <span class="file-meta">{{ paste.language }} &middot; {{ line_count }} line{{ '' if line_count == 1 else 's' }} &middot; {{ size }}</span>
-</div>
 <div class="view-full" id="viewFull"
      data-paste-id="{{ paste.id }}" data-title="{{ paste.title }}" data-filename="{{ paste.filename }}" data-language="{{ paste.language }}">
     <pre id="viewPre"{% if prism_lang %} class="language-{{ prism_lang }}"{% endif %}><code id="codeBlock"{% if prism_lang %} class="language-{{ prism_lang }}"{% endif %}>{{ paste.content }}</code></pre>

@@ -135,15 +135,6 @@ body {
 }
 .nav-btn-save:hover { background: var(--primary); color: var(--on-primary); }
 
-.nav-paste-title {
-    font-size: 0.85rem;
-    color: var(--text-sub);
-    max-width: 220px;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-    flex-shrink: 1;
-}
 
 .nav-label {
     display: flex;
@@ -341,7 +332,6 @@ pre[class*="language-"], code[class*="language-"] {
 /* ── Responsive ────────────────────────────────────────────────────────── */
 @media (max-width: 600px) {
     .nav-input  { width: 90px; }
-    .nav-paste-title { display: none; }
 }
 
 /* ── Utility & New Actions ─────────────────────────────────────────────── */
@@ -664,10 +654,6 @@ a.comment-reply:hover { text-decoration: underline; color: var(--primary); }
 .editor-hint { flex-shrink: 0; padding: 0.25rem 1rem; font-size: 0.7rem; color: var(--text-muted); background: var(--surface); border-top: 1px solid var(--border); }
 
 /* ── View page: file header ───────────────────────────────────────────── */
-.file-header {
-    display: flex; flex-wrap: wrap; align-items: baseline; gap: 0.25rem 0.9rem; flex-shrink: 0;
-    padding: 0.45rem 1.5rem; background: var(--surface); border-bottom: 1px solid var(--border);
-}
 .file-name { font-weight: 600; font-size: 0.85rem; color: var(--text); word-break: break-all; }
 .file-meta { font-size: 0.75rem; color: var(--text-muted); }
 
@@ -684,3 +670,17 @@ a.comment-reply:hover { text-decoration: underline; color: var(--primary); }
     background: var(--bg); color: var(--text-sub); font-family: var(--mono); font-size: 0.68rem;
 }
 .full-editor.tab-moves-focus { box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--primary) 45%, transparent); }
+
+/* The paste's name and stats sit in the top bar: Logo | filename (bash · 8 lines · 201 B) | controls */
+.paste-info {
+    display: flex; align-items: baseline; gap: 0.6rem; flex: 1 1 8rem; min-width: 0;
+    overflow: hidden; white-space: nowrap; margin: 0 0.4rem;
+}
+.paste-description { color: var(--text-sub); font-size: 0.85rem; overflow: hidden; text-overflow: ellipsis; flex: 0 1 auto; max-width: 45%; }
+.paste-info .file-name { overflow: hidden; text-overflow: ellipsis; word-break: normal; flex: 0 1 auto; min-width: 3rem; }
+.paste-info .file-meta { flex: 0 0 auto; }
+@media (max-width: 900px) {
+    .navbar { height: auto; min-height: 42px; flex-wrap: wrap; padding: 0.3rem 0.75rem; }
+    .nav-content, .nav-links { flex-wrap: wrap; }
+    .paste-info { flex-basis: 100%; order: 5; margin: 0; }
+}

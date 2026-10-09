@@ -1274,3 +1274,33 @@ def test_every_paste_control_lives_in_the_file_bar(client):
     assert form.index('id="submitBtn"') < form.index('id="content"')       # the bar sits above the editor
     assert 'Allow comments' in form and not re.search(r'>\s*Discuss\s*<|> Discuss\b', html)   # the old label is gone
     assert 'Control+Shift+M' in form
+
+
+def nav_of(html):
+    return html.split('</nav>')[0]
+
+
+def test_filename_and_stats_live_in_the_top_bar(client):
+    pid = create(client, filename='deploy.sh', content='echo a\necho b\n')['paste_id']
+    html = client.get(f'/{pid}').get_data(as_text=True)
+    nav = nav_of(html)
+    assert 'class="file-header"' not in html                      # no separate strip under the bar any more
+    # Logo | filename (stats) | Show lines | Wrap | Raw | Copy | Download | Report | New | Theme toggle
+    order = [nav.index(m) for m in ('class="brand"', 'class="file-name"', 'class="file-meta"', 'id="lineNoToggle"',
+                                    'id="wrapToggle"', 'id="rawBtn"', 'id="copyBtn"', 'id="downloadBtn"',
+                                    '>Report<', '>New<', 'id="themeToggle"')]
+    assert order == sorted(order)
+    assert 'Show lines' in nav and 'bash &middot; 2 lines &middot; 14 B' in nav
+    assert 'paste-description' not in nav                         # no description: just the filename
+
+
+def test_a_description_shows_in_front_of_the_filename_only_when_there_is_one(client):
+    nav = nav_of(client.get('/' + create(client, title='Deploy <b>helper</b>', filename='deploy.sh')['paste_id']).get_data(as_text=True))
+    assert nav.index('paste-description') < nav.index('class="file-name"')
+    assert 'Deploy &lt;b&gt;helper&lt;/b&gt;' in nav and '<b>helper' not in nav
+    nav = nav_of(client.get('/' + create(client, title='Just notes')['paste_id']).get_data(as_text=True))
+    assert 'Just notes' in nav and 'class="file-name"' not in nav     # a description alone is the name
+    nav = nav_of(client.get('/' + create(client)['paste_id']).get_data(as_text=True))
+    assert '<span class="file-name">untitled</span>' in nav and 'paste-description' not in nav
+    nav = nav_of(client.get('/' + create(client, title='deploy.sh', filename='deploy.sh')['paste_id']).get_data(as_text=True))
+    assert 'paste-description' not in nav                         # a description equal to the filename isn't repeated
