@@ -80,7 +80,7 @@ document.addEventListener('DOMContentLoaded', function () {
     }
     restore(indentMode, 'indent_mode', 'spaces');
     restore(indentSize, 'indent_size', '4');
-    restore(wrapMode,   'wrap_mode',   'soft');
+    restore(wrapMode,   'wrap_mode',   'off');          // like GitHub: long lines scroll instead of wrapping
 
     function applyEditorOptions() {
         textarea.style.tabSize = indentSize.value;                 // how a tab character is drawn

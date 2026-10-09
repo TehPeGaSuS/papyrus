@@ -12,7 +12,7 @@ SQLite for storage, no build step.
   own logo and icons
 - **Paste and share**: short links (`/<id>`), raw text at `/raw/<id>`, `curl` uploads, download as a file
 - **Gist-style editor**: description, filename (the extension picks the syntax highlighting), indent mode
-  (spaces or tabs), indent size (2, 4, 8), soft wrap or no wrap, Tab/Shift+Tab indenting and auto-indent
+  (spaces or tabs), indent size (2, 4, 8), no wrap (the default, like GitHub) or soft wrap, Tab/Shift+Tab indenting and auto-indent
 - **Syntax highlighting** with Prism.js, line numbers, line-range links (`?L=5-12`), word wrap toggle
 - **Expiry**: pastes are temporary: 1 hour, 1 day, 1 week or 1 month, one week by default (configurable)
 - **Threaded discussions**: optional per-paste comments and nested replies, each in its own box,

@@ -1249,3 +1249,12 @@ def test_a_database_from_an_earlier_development_version_is_refused_with_a_clear_
     assert 'delete or move' in str(exc.value) and path in str(exc.value)
     assert sqlite3.connect(path).execute('PRAGMA user_version').fetchone()[0] == 0     # left untouched
     monkeypatch.setattr(papyrus, '_db_initialized', True)       # (so the client fixture isn't confused afterwards)
+
+
+def test_long_lines_do_not_wrap_by_default(client):
+    editor = client.get('/').get_data(as_text=True)
+    assert re.search(r'<option value="off" selected>No wrap</option>\s*<option value="soft">Soft wrap</option>', editor)
+    pid = create(client, content='x' * 500)['paste_id']
+    page = client.get(f'/{pid}').get_data(as_text=True)
+    assert 'class="view-full"' in page and 'wrap-lines' not in page.split('id="viewFull"')[0]
+    assert not re.search(r'id="wrapToggle"[^>]*checked', page)

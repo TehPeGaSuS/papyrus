@@ -5,6 +5,7 @@
 :root {
     --primary:      #2563eb;
     --primary-h:    #1d4ed8;
+    --on-primary:   #ffffff;          /* text on a --primary background */
     --bg:           #ffffff;
     --surface:      #f8fafc;
     --border:       #e2e8f0;
@@ -21,6 +22,7 @@
 [data-theme="dark"] {
     --primary:      #3b82f6;
     --primary-h:    #2563eb;
+    --on-primary:   #ffffff;
     --bg:           #0f172a;
     --surface:      #1e293b;
     --border:       #334155;
@@ -131,7 +133,7 @@ body {
     color: var(--primary);
     font-weight: 600;
 }
-.nav-btn-save:hover { background: var(--primary); color: #fff; }
+.nav-btn-save:hover { background: var(--primary); color: var(--on-primary); }
 
 .nav-paste-title {
     font-size: 0.85rem;
@@ -280,7 +282,7 @@ body {
 }
 .btn:hover { border-color: var(--primary); color: var(--primary); }
 .btn-primary { border-color: var(--primary); color: var(--primary); font-weight: 600; }
-.btn-primary:hover { background: var(--primary); color: #fff; }
+.btn-primary:hover { background: var(--primary); color: var(--on-primary); }
 
 /* ── Notification toast ────────────────────────────────────────────────── */
 .notification {
@@ -310,13 +312,13 @@ pre[class*="language-"], code[class*="language-"] {
     position: absolute;
     left: 0;
     right: 0;
-    background: rgba(37, 99, 235, 0.1);
+    background: color-mix(in srgb, var(--primary) 10%, transparent);
     border-left: 3px solid var(--primary);
     pointer-events: none;
     z-index: 0;
 }
 [data-theme="dark"] .line-hl {
-    background: rgba(59, 130, 246, 0.15);
+    background: color-mix(in srgb, var(--primary) 15%, transparent);
 }
 
 /* Gutter span for highlighted lines */
@@ -378,7 +380,7 @@ pre[class*="language-"], code[class*="language-"] {
 }
 .form-group input:focus { border-color: var(--primary); }
 .submit-btn { 
-    width: 100%; padding: 0.6rem; background: var(--primary); color: #fff; 
+    width: 100%; padding: 0.6rem; background: var(--primary); color: var(--on-primary); 
     border: none; border-radius: var(--radius); cursor: pointer; font-weight: 600; margin-top: 0.5rem;
 }
 .submit-btn:hover { background: var(--primary-h); }

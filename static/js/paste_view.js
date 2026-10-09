@@ -245,7 +245,7 @@ function initWordWrap() {
     if (!toggle || !viewDiv) return;
 
     const stored  = localStorage.getItem('wrap_lines');
-    const enabled = stored === null ? true : stored === 'true';
+    const enabled = stored === null ? false : stored === 'true';   // default: no wrap, like GitHub
     toggle.checked = enabled;
     viewDiv.classList.toggle('wrap-lines', enabled);
 
