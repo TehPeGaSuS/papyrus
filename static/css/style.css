@@ -657,3 +657,15 @@ a.comment-reply:hover { text-decoration: underline; color: var(--primary); }
     .nav-content, .nav-links { flex-wrap: wrap; }
     .paste-info { flex-basis: 100%; order: 5; margin: 0; }
 }
+
+/* ── Site notice (under the top bar) and footer (bottom of every page) ────── */
+.site-notice {
+    flex-shrink: 0; padding: 0.45rem 1rem; font-size: 0.8rem; color: var(--text);
+    background: color-mix(in srgb, var(--primary) 8%, var(--bg));
+    border-bottom: 1px solid var(--border); border-left: 3px solid var(--primary);
+}
+.site-footer {
+    flex-shrink: 0; padding: 0.3rem 1rem; font-size: 0.72rem; text-align: center; color: var(--text-muted);
+    background: var(--surface); border-top: 1px solid var(--border);
+}
+.site-notice a, .site-footer a { color: var(--primary); }

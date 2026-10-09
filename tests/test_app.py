@@ -1494,3 +1494,81 @@ def test_every_function_app_js_calls_is_defined():
                  'initPalette', 'toggleTheme', 'copyToClipboard'):
         if re.search(rf'\b{name}\(', js):
             assert re.search(rf'function\s+{name}\b|{name}\s*=\s*(async\s*)?(function|\()', js), f'{name} is called but not defined'
+
+
+# ── Site notice and footer ────────────────────────────────────────────────────
+
+def site_text(monkeypatch, key, value):
+    monkeypatch.setitem(papyrus._site, key, value)
+    return papyrus._render_site_text(key)
+
+
+def test_site_text_is_inline_markdown(monkeypatch):
+    html = site_text(monkeypatch, 'footer', '**Hello** and [terms](https://example.org/terms) &mdash; bare https://example.org/x')
+    assert html == ('<strong>Hello</strong> and <a href="https://example.org/terms" rel="noopener noreferrer nofollow">terms</a> '
+                    '&amp;mdash; bare <a href="https://example.org/x" rel="noopener noreferrer nofollow">https://example.org/x</a>')
+    assert not str(html).startswith('<p>')                      # inline, no paragraph wrapper
+
+
+def test_site_text_cannot_inject_html_or_scripts(monkeypatch):
+    html = str(site_text(monkeypatch, 'notice', '<script>alert(1)</script>\n\nsee <b onclick="x()">this</b> '
+                                                 '[x](javascript:alert(3)) ![pic](http://tracker.example/p.png)'))
+    assert '<script' not in html and '<img' not in html and '<b ' not in html and '<b>' not in html
+    assert '&lt;script&gt;' in html                              # raw HTML survives only as inert text
+    assert 'href="javascript' not in html.lower()
+    assert 'href="http://tracker.example/p.png"' in html          # an image becomes a plain link, as in comments
+
+
+def test_longer_site_text_keeps_its_paragraphs(monkeypatch):
+    html = str(site_text(monkeypatch, 'footer', 'First line.\n\nSecond paragraph.'))
+    assert html.count('<p>') == 2
+
+
+@pytest.mark.parametrize('value', ['', '   \n ', None])
+def test_empty_site_text_renders_nothing(monkeypatch, value):
+    assert str(site_text(monkeypatch, 'footer', value)) == ''
+
+
+@pytest.mark.parametrize('value', [42, ['a'], {'a': 1}, 'x' * 1001])
+def test_bad_site_text_fails_at_startup(monkeypatch, value):
+    monkeypatch.setitem(papyrus._site, 'notice', value)
+    with pytest.raises(RuntimeError) as exc:
+        papyrus._render_site_text('notice')
+    assert 'site.notice' in str(exc.value)
+
+
+def test_the_shipped_footer_is_the_disclaimer_and_there_is_no_notice():
+    site = json.load(open(os.path.join(os.path.dirname(papyrus.__file__), 'config.example.json')))['site']
+    assert site['footer'] == ('This website does not claim ownership of, copyright on, and assumes no '
+                              'liability for provided content.')
+    assert site['notice'] == '' and 'footer_text' not in site
+
+
+def test_the_footer_is_on_every_page_and_no_notice_by_default(client):
+    pid = create(client, discussions=True)['paste_id']
+    tok = create(client)['removal_token']
+    paths = ['/', f'/{pid}', f'/{pid}/report', f'/remove/{tok}', '/admin/login', '/nothing-here-0000']
+    for path in paths:
+        html = client.get(path).get_data(as_text=True)
+        assert '<footer class="site-footer">' in html and 'assumes no liability for provided content.' in html, path
+        assert html.index('</main>') < html.index('<footer class="site-footer">') < html.index('<script', html.index('</main>')), path
+        assert 'site-notice' not in html.replace('.site-notice', ''), path
+    assert 'class="site-footer"' in client.post(f'/remove/{tok}').get_data(as_text=True)
+
+
+def test_a_notice_shows_as_a_banner_under_the_top_bar(client, monkeypatch):
+    monkeypatch.setattr(papyrus, '_SITE_NOTICE', site_text(monkeypatch, 'notice', 'Pastes are **temporary**. See the [rules](/rules).'))
+    for path in ('/', '/admin/login'):
+        html = client.get(path).get_data(as_text=True)
+        assert html.index('</nav>') < html.index('<div class="site-notice"') < html.index('<main'), path
+        assert '<strong>temporary</strong>' in html and 'href="/rules"' in html
+
+
+def test_footer_and_notice_can_be_switched_off(client, monkeypatch):
+    monkeypatch.setattr(papyrus, '_SITE_FOOTER', site_text(monkeypatch, 'footer', ''))
+    html = client.get('/').get_data(as_text=True)
+    assert '<footer' not in html and 'class="site-notice"' not in html
+
+
+def test_api_config_no_longer_has_the_unused_footer_text(client):
+    assert 'footer_text' not in client.get('/api/config').get_json()['site']

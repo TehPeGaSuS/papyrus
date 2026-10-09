@@ -4,7 +4,8 @@
   "site": {
     "name": "Papyrus",
     "tagline": "Simple, fast pastes with Markdown discussions.",
-    "footer_text": "Simple, fast, and reliable.",
+    "notice": "",
+    "footer": "This website does not claim ownership of, copyright on, and assumes no liability for provided content.",
     "base_url": ""
   },
 

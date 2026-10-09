@@ -287,7 +287,8 @@ def _reports_enabled():
 def inject_config():
     return {'cfg': CFG, 'csp_nonce': getattr(g, 'csp_nonce', ''),
             'reports_enabled': _reports_enabled(), 'is_admin': is_admin(),
-            'palettes': _PALETTES, 'default_palette': _DEFAULT_PALETTE, 'theme_css_version': _THEME_CSS_VERSION}
+            'palettes': _PALETTES, 'default_palette': _DEFAULT_PALETTE, 'theme_css_version': _THEME_CSS_VERSION,
+            'site_notice': _SITE_NOTICE, 'site_footer': _SITE_FOOTER}
 
 @app.template_filter('markdown')
 def markdown_filter(text):
@@ -747,6 +748,25 @@ _PALETTES, _DEFAULT_PALETTE = _load_palettes(_theme)
 _THEME_CSS = _build_theme_css(_PALETTES)
 _THEME_CSS_VERSION = hashlib.sha256(_THEME_CSS.encode()).hexdigest()[:10]
 
+# ── Site notice and footer ───────────────────────────────────────────────────
+# site.notice (a banner under the top bar) and site.footer (the bar at the bottom of every page) are
+# inline Markdown from config.json: links and emphasis work, raw HTML is escaped, like comments.
+_MAX_SITE_TEXT = 1000
+
+def _render_site_text(key):
+    text = _site.get(key) or ''
+    if not isinstance(text, str) or len(text) > _MAX_SITE_TEXT:
+        raise RuntimeError(f'site.{key} must be text of at most {_MAX_SITE_TEXT} characters')
+    text = text.strip()
+    if not text:
+        return Markup('')
+    html = render_markdown(text)
+    single = re.fullmatch(r'<p>(.*)</p>\s*', html, re.S)            # one paragraph: render it inline
+    return Markup(single.group(1) if single and '<p>' not in single.group(1) else html)
+
+_SITE_NOTICE = _render_site_text('notice')
+_SITE_FOOTER = _render_site_text('footer')
+
 # Prism language ids differ from ours for a few languages; False = no highlighting.
 _PRISM_LANG_MAP = {'text': False, 'html': 'markup', 'xml': 'markup'}
 
@@ -956,7 +976,6 @@ def get_client_config():
         'site': {
             'name':        _site.get('name', 'Papyrus'),
             'tagline':     _site.get('tagline', ''),
-            'footer_text': _site.get('footer_text', ''),
         },
         'theme': {
             'default':          _theme.get('default', 'auto'),
