@@ -16,6 +16,9 @@ dependencies = [
     "nh3>=0.3",
 ]
 
+[project.urls]
+Source = "https://github.com/TehPeGaSuS/papyrus"
+
 [project.optional-dependencies]
 test = ["pytest"]
 

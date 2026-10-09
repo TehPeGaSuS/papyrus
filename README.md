@@ -39,7 +39,7 @@ SQLite for storage, no build step.
 ## Quick start
 
 ```bash
-git clone <repository-url> papyrus && cd papyrus
+git clone https://github.com/TehPeGaSuS/papyrus.git && cd papyrus
 python3 app.py
 ```
 
