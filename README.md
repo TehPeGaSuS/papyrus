@@ -73,7 +73,7 @@ no `config.json`. Restart after changing it.
 - `site.footer`: a line of text at the bottom of every page (the shipped one says the site claims no ownership of,
   and has no liability for, what people paste). `site.notice`: an optional banner under the top bar, off by default.
   Both are inline Markdown, so `[links](https://example.org)` and `**emphasis**` work and raw HTML is escaped; leave
-  either empty to hide it
+  either empty to hide it. The footer always ends with a link to the project's source
 - `theme.palettes`, `theme.palette`: the colour themes visitors can pick from the dropdown next to the light/dark
   toggle, and the default one (rust). See below
 - `features.show_recent`: enable the `/recent` page

@@ -1564,10 +1564,25 @@ def test_a_notice_shows_as_a_banner_under_the_top_bar(client, monkeypatch):
         assert '<strong>temporary</strong>' in html and 'href="/rules"' in html
 
 
-def test_footer_and_notice_can_be_switched_off(client, monkeypatch):
+def test_footer_text_and_notice_can_be_switched_off_but_the_source_link_stays(client, monkeypatch):
     monkeypatch.setattr(papyrus, '_SITE_FOOTER', site_text(monkeypatch, 'footer', ''))
     html = client.get('/').get_data(as_text=True)
-    assert '<footer' not in html and 'class="site-notice"' not in html
+    footer = re.search(r'<footer class="site-footer">.*?</footer>', html, re.S).group(0)
+    assert 'class="site-notice"' not in html
+    assert footer == ('<footer class="site-footer">Source: <a href="https://github.com/TehPeGaSuS/papyrus" '
+                      'rel="noopener">https://github.com/TehPeGaSuS/papyrus</a></footer>')
+
+
+def test_the_source_link_follows_the_configured_footer_text(client):
+    footer = re.search(r'<footer class="site-footer">.*?</footer>', client.get('/').get_data(as_text=True), re.S).group(0)
+    assert footer.index('assumes no liability') < footer.index('&middot;') < footer.index('Source:')
+    assert 'href="https://github.com/TehPeGaSuS/papyrus"' in footer
+
+
+def test_the_source_link_is_on_every_page(client):
+    pid = create(client)['paste_id']
+    for path in ('/', f'/{pid}', '/admin/login', '/nothing-here-0000'):
+        assert 'Source: <a href="https://github.com/TehPeGaSuS/papyrus"' in client.get(path).get_data(as_text=True), path
 
 
 def test_api_config_no_longer_has_the_unused_footer_text(client):

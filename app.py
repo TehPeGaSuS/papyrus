@@ -299,7 +299,7 @@ def inject_config():
     return {'cfg': CFG, 'csp_nonce': getattr(g, 'csp_nonce', ''),
             'reports_enabled': _reports_enabled(), 'is_admin': is_admin(),
             'palettes': _PALETTES, 'default_palette': _DEFAULT_PALETTE, 'theme_css_version': _THEME_CSS_VERSION,
-            'site_notice': _SITE_NOTICE, 'site_footer': _SITE_FOOTER}
+            'site_notice': _SITE_NOTICE, 'site_footer': _SITE_FOOTER, 'source_url': SOURCE_URL}
 
 @app.template_filter('markdown')
 def markdown_filter(text):
@@ -774,6 +774,9 @@ def _render_site_text(key):
     html = render_markdown(text)
     single = re.fullmatch(r'<p>(.*)</p>\s*', html, re.S)            # one paragraph: render it inline
     return Markup(single.group(1) if single and '<p>' not in single.group(1) else html)
+
+# The footer always links to the source, whatever site.footer says (or doesn't).
+SOURCE_URL = 'https://github.com/TehPeGaSuS/papyrus'
 
 _SITE_NOTICE = _render_site_text('notice')
 _SITE_FOOTER = _render_site_text('footer')

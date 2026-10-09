@@ -50,7 +50,7 @@
     <main class="{% block main_class %}page-container{% endblock %}">
         {% block content %}{% endblock %}
     </main>
-    {% if site_footer %}<footer class="site-footer">{{ site_footer }}</footer>{% endif %}
+    <footer class="site-footer">{% if site_footer %}{{ site_footer }} <span class="footer-sep" aria-hidden="true">&middot;</span> {% endif %}Source: <a href="{{ source_url }}" rel="noopener">{{ source_url }}</a></footer>
 
     <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/prism.min.js"
         integrity="sha512-7Z9J3l1+EYfeaPKcGXu3MS/7T+w19WtKQY/n+xzmw4hZhJ9tyYmcUS+4QqAlzhicE5LAfMQSF3iFTK9bQdTxXg=="
