@@ -64,8 +64,11 @@ Commenting from a browser over HTTPS is the check for `X-Forwarded-Proto`: if it
 
 Each example was run for real, with Papyrus behind it, using forged `X-Forwarded-For` / `X-Forwarded-Proto`
 headers: **nginx 1.28**, **Apache 2.4.66** (`expr=` in `RequestHeader` needs 2.4.10 or newer) and
-**Caddy 2.6.2**, in both plain-HTTP and TLS layouts, and with the Cloudflare variants in
-[`cloudflare.md`](cloudflare.md). Forged headers had no effect, and `X-Forwarded-Proto` matched the
+**Caddy 2.6.2**, in both plain-HTTP and TLS layouts, with the Cloudflare variants in
+[`cloudflare.md`](cloudflare.md), and a real **Cloudflare Tunnel** (`cloudflared` 2026.10) straight to
+Papyrus: a forged `X-Forwarded-For` stayed in front of the visitor's address (which Cloudflare appended and
+which equalled `CF-Connecting-IP`), `X-Forwarded-Proto` arrived as `https`, comments passed the origin check
+and the rate limit applied to the real visitor. Forged headers had no effect, and `X-Forwarded-Proto` matched the
 real scheme. The certbot layouts were checked by applying the lines certbot adds and its real
 `options-ssl-apache.conf` (copied from a real Apache install; TLS 1.2 and 1.3 work, 1.1 is refused as that
 file intends), not by running certbot itself.

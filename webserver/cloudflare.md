@@ -19,8 +19,19 @@ ingress:
 
 Papyrus sees the connection from `cloudflared` on the same machine (a trusted proxy by default) and reads
 the `X-Forwarded-For` and `X-Forwarded-Proto` headers Cloudflare adds. Cloudflare appends the visitor's
-address to `X-Forwarded-For`, so the last entry is the visitor, which is the one Papyrus uses. Set
-`"use_https": true` in `config.json`. Nothing else needs configuring.
+address to `X-Forwarded-For`, so the last entry is the visitor, which is the one Papyrus uses; it also
+overwrites `X-Forwarded-Proto` with `https`. Set `"use_https": true` in `config.json`. Nothing else needs
+configuring.
+
+To try it without an account or a domain, a quick tunnel gives a temporary public address (anyone with the
+link can reach your Papyrus while it runs, so use test data):
+
+```bash
+python3 app.py &
+cloudflared tunnel --url http://127.0.0.1:5500    # prints https://<random>.trycloudflare.com
+```
+
+The new hostname can take up to a minute to resolve.
 
 ## 2. Proxied DNS record (orange cloud) in front of nginx, Apache or Caddy
 
