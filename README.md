@@ -67,43 +67,14 @@ no `config.json`. Restart after changing it.
 
 ## Deployment
 
-Run it behind a reverse proxy and let the proxy say who the visitor is. Papyrus needs two headers:
+Run Papyrus behind a reverse proxy that terminates TLS. Ready-to-use configs for **nginx**, **Apache**
+and **Caddy**, with Let's Encrypt (certbot) and **Cloudflare** notes, are in [`webserver/`](webserver/).
 
-- `X-Forwarded-For`: the visitor's address, used for the per-IP rate limits. Without it everyone looks
-  like `127.0.0.1` and shares one limit. Papyrus uses the **last** entry, which is the one your proxy
-  set, so anything a visitor sends in front of it is ignored.
-- `X-Forwarded-Proto`: `https` when the visitor used TLS. Without it, posting comments, deleting and
-  the admin login fail the origin check.
-
-Papyrus only believes these headers when the connection comes from `server.trusted_proxy_ips`
-(a proxy on the same machine by default), so a visitor who reaches the app directly can't forge them.
-Keep the app bound to `127.0.0.1` (the default) and set `"use_https": true` when serving over TLS.
-
-nginx:
-
-```nginx
-location / {
-    proxy_pass http://127.0.0.1:5500;
-    proxy_set_header Host $host;
-    proxy_set_header X-Forwarded-For $remote_addr;
-    proxy_set_header X-Forwarded-Proto $scheme;
-    client_max_body_size 3m;
-}
-```
-
-Apache (`mod_proxy`, `mod_headers`):
-
-```apache
-ProxyPreserveHost On
-ProxyPass        / http://127.0.0.1:5500/
-ProxyPassReverse / http://127.0.0.1:5500/
-RequestHeader set X-Forwarded-Proto "https"
-# mod_proxy adds X-Forwarded-For itself (ProxyAddHeaders is on by default)
-```
-
-If another proxy or a CDN sits in front of yours, make your proxy see the real visitor address
-(nginx: `set_real_ip_from` and `real_ip_header`; Apache: `mod_remoteip`) so that `$remote_addr`
-above is the visitor and not the CDN.
+The one thing to know: the proxy has to **set** two headers, `X-Forwarded-For` (the visitor's address,
+for the per-IP rate limits) and `X-Forwarded-Proto` (`https` over TLS, for the origin check). Papyrus
+believes them only from a proxy on the same machine (`server.trusted_proxy_ips`), so a visitor who
+reaches the app directly can't forge them. Keep it bound to `127.0.0.1` and set `"use_https": true`
+when serving over TLS. [`webserver/README.md`](webserver/README.md) has the details and a quick check.
 
 systemd (`/etc/systemd/system/papyrus.service`), after running `python3 app.py` once as the service
 user to set everything up:
@@ -182,6 +153,7 @@ kept, encrypted ones stay in `pastes_encrypted_legacy`.
 - State-changing requests are checked against the request's `Origin`/`Referer`.
 - Per-IP, SQLite-backed rate limits apply to paste creation, comments, previews and failed admin logins.
   `X-Forwarded-For` is believed only from `server.trusted_proxy_ips`, so it can't be forged by a visitor.
+  See [`webserver/`](webserver/) for proxy configs.
 - Paste IDs are random and at least 12 hex characters long.
 - Size limits: `pastes.max_size_bytes` (2 MB default) for pastes, 10 KB for comments.
 - Gunicorn's control socket is named after the project and port (`$XDG_RUNTIME_DIR/papyrus-<port>.ctl`,

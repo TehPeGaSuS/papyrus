@@ -1,0 +1,24 @@
+# Papyrus behind Caddy 2 (2.6 or newer). Caddy gets the certificate by itself.
+#
+# Caddy's reverse_proxy already sets X-Forwarded-For (the visitor's address, as the last entry) and
+# X-Forwarded-Proto, and does not trust such headers from visitors, so a plain setup needs nothing else.
+
+paste.example.com {
+    # pastes.max_size_bytes is 2 MB by default; leave headroom for the JSON wrapper.
+    request_body {
+        max_size 3MB
+    }
+
+    # Behind Cloudflare? Uncomment this block (see cloudflare.md for how to create the import file)
+    # so that Cloudflare's visitor address is used, but only for connections from Cloudflare:
+    # import /etc/caddy/cloudflare-ips.caddy
+    # handle @cloudflare {
+    #     reverse_proxy 127.0.0.1:5500 {
+    #         header_up X-Forwarded-For {http.request.header.CF-Connecting-IP}
+    #     }
+    # }
+
+    handle {
+        reverse_proxy 127.0.0.1:5500
+    }
+}
