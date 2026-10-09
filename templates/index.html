@@ -5,10 +5,8 @@
 
 {% block nav_actions %}
 <select id="expires_in" class="nav-select" title="Expires">
-    {% for opt in cfg.pastes.allow_expiry_options %}
-    <option value="{{ opt }}" {% if opt == cfg.pastes.default_expiry %}selected{% endif %}>
-        {{ cfg.pastes.expiry_labels.get(opt, opt) }}
-    </option>
+    {% for opt in expiry_options %}
+    <option value="{{ opt.value }}" {% if opt.value == default_expiry %}selected{% endif %}>{{ opt.label }}</option>
     {% endfor %}
 </select>
 <label class="nav-label" title="Allow discussions on this paste">

@@ -25,13 +25,12 @@
     "recent_limit": 50,
     "default_language": "text",
     "default_expiry": "1year",
-    "allow_expiry_options": ["1hour", "1day", "1week", "1month", "1year"],
-    "expiry_labels": {
-      "1hour":  "1 Hour",
-      "1day":   "1 Day",
-      "1week":  "1 Week",
-      "1month": "1 Month",
-      "1year":  "1 Year"
+    "expiries": {
+      "1hour": 3600,
+      "1day": 86400,
+      "1week": 604800,
+      "1month": 2592000,
+      "1year": 31536000
     }
   },
 

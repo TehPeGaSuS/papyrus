@@ -63,7 +63,8 @@ document.addEventListener('DOMContentLoaded', function () {
     // ── Expiry and discussion preferences ────────────────────────────────────
     const expirySelect = $('expires_in');
     const savedExpiry  = store.get('preferred_expiry');
-    if (savedExpiry) expirySelect.value = savedExpiry;
+    // Only reuse a saved choice the site still offers (the options are configurable).
+    if (savedExpiry && Array.from(expirySelect.options).some(o => o.value === savedExpiry)) expirySelect.value = savedExpiry;
     expirySelect.addEventListener('change', () => store.set('preferred_expiry', expirySelect.value));
 
     const discussCheck = $('allowDiscussions');

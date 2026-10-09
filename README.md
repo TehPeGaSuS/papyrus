@@ -65,11 +65,32 @@ no `config.json`. Restart after changing it.
   (default `["127.0.0.1", "::1"]`, i.e. a proxy on the same machine; CIDR ranges work too)
 - `server.use_https`: mark the session cookie `Secure`
 - `server.secret_key`: signs the admin session. The `SECRET_KEY` environment variable overrides it
-- `pastes.*`: size limit, default language, expiry options, `recent_limit`
+- `pastes.expiries`: the expiry choices, see below. `pastes.default_expiry` names the one selected by default
+- `pastes.*`: also the size limit, the default language and `recent_limit`
 - `features.show_recent`: enable the `/recent` page
 - `features.reports`: allow reporting (default `true`; also needs the admin panel, since someone has to read them)
 - `admin.*`: managed by `python3 app.py admin`
 - `database.path`: SQLite file, relative to the project directory (default `papyrus.db`)
+
+### Expiry times
+
+`pastes.expiries` maps a name to a duration, like pinnwand's `expiries`. The names are what the menu, the
+API (`expires_in=1day`) and `curl` use; the durations are yours to choose:
+
+```json
+"expiries": {
+  "10min":   "10m",
+  "1hour":   3600,
+  "3days":   "3d",
+  "forever": null
+},
+"default_expiry": "1hour"
+```
+
+A duration is a number of seconds, a short form (`30s`, `10m`, `36h`, `3d`, `2w`, `1y`), or `null` for a paste
+that never expires. The menu label is made from the duration ("10 minutes", "3 days", "Never"); to word it
+yourself write `"3days": {"duration": "3d", "label": "Three days"}`. An unknown `expires_in` is refused with a list
+of the valid names. A mistake in this section stops Papyrus at startup with a message saying what is wrong.
 
 ## Deployment
 
@@ -174,9 +195,6 @@ CREATE TABLE reports (
     UNIQUE (paste_id, comment_id, reporter)
 );
 ```
-
-A database from an older end-to-end-encrypted build is migrated on startup: unencrypted pastes are
-kept, encrypted ones stay in `pastes_encrypted_legacy`.
 
 ## Security notes
 

@@ -37,6 +37,16 @@ def create(client, **extra):
     return r.get_json()
 
 
+def set_expiries(monkeypatch, expiries, default=None):
+    """Use these expiry choices (same format as pastes.expiries in config.json) for one test."""
+    cfg = {'expiries': expiries}
+    if default:
+        cfg['default_expiry'] = default
+    options, chosen = papyrus._load_expiry_options(cfg)
+    monkeypatch.setattr(papyrus, '_EXPIRY_OPTIONS', options)
+    monkeypatch.setattr(papyrus, '_DEFAULT_EXPIRY', chosen)
+
+
 def curl_urls(response):
     """Parse the three lines `curl` prints: {'Paste URL': ..., 'Raw URL': ..., 'Removal URL': ...}."""
     lines = response.get_data(as_text=True).strip().splitlines()
@@ -89,24 +99,12 @@ def test_expired_paste_is_gone(client):
     assert client.get(f'/{pid}').status_code == 410
 
 
-def test_is_expired_handles_legacy_space_format():
+def test_is_expired_reads_both_timestamp_spellings():
     future = (datetime.datetime.now(UTC) + datetime.timedelta(hours=1)).isoformat(' ')
     past = (datetime.datetime.now(UTC) - datetime.timedelta(hours=1)).isoformat(' ')
     assert not papyrus._is_expired(future)
     assert papyrus._is_expired(past)
     assert not papyrus._is_expired(None)
-
-
-def test_init_db_migrates_legacy_expiry_format(client):
-    conn = db()
-    conn.execute("INSERT INTO pastes (id, title, content, expires_at) VALUES (?,?,?,?)",
-                 ('legacy000001', 't', 'x', '2099-01-01 10:00:00+00:00'))
-    conn.commit()
-    conn.close()
-    papyrus._db_initialized = False
-    papyrus.init_db()
-    stored = db().execute("SELECT expires_at FROM pastes WHERE id='legacy000001'").fetchone()[0]
-    assert stored == '2099-01-01T10:00:00+00:00'
 
 
 # ── Same-origin check ─────────────────────────────────────────────────────────
@@ -387,41 +385,6 @@ def test_purge_expired_removes_comments_too(client):
 
 # ── Migration from the old end-to-end-encrypted schema ────────────────────────
 
-def test_migrates_encrypted_schema(tmp_path, monkeypatch):
-    path = str(tmp_path / 'old.db')
-    conn = sqlite3.connect(path)
-    conn.executescript("""
-        CREATE TABLE pastes (id TEXT PRIMARY KEY, encrypted_data TEXT NOT NULL,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, expires_at TIMESTAMP,
-            views INTEGER DEFAULT 0, deletion_token TEXT, discussions_enabled INTEGER DEFAULT 0);
-        CREATE TABLE comments (id TEXT PRIMARY KEY, paste_id TEXT NOT NULL, content TEXT NOT NULL,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP);
-    """)
-    plain = '{"title": "T", "content": "hello", "language": "python", "discussions": true}'
-    conn.execute("INSERT INTO pastes (id, encrypted_data, discussions_enabled, views) VALUES ('aaaaaaaaaaaa', ?, 1, 7)", (plain,))
-    conn.execute("INSERT INTO pastes (id, encrypted_data) VALUES ('bbbbbbbbbbbb', 'abc_-:def_-')")
-    conn.execute("INSERT INTO comments (id, paste_id, content) VALUES ('c1', 'aaaaaaaaaaaa', ?)",
-                 ('{"content": "nice", "nick": "bob"}',))
-    conn.execute("INSERT INTO comments (id, paste_id, content) VALUES ('c2', 'bbbbbbbbbbbb', 'cipher:text')")
-    conn.commit()
-    conn.close()
-
-    monkeypatch.setattr(papyrus, 'DATABASE', path)
-    monkeypatch.setattr(papyrus, '_db_initialized', False)
-    monkeypatch.setattr(papyrus, '_cleanup_running', True)
-    papyrus.init_db()
-
-    conn = sqlite3.connect(path)
-    conn.row_factory = sqlite3.Row
-    paste = conn.execute("SELECT * FROM pastes WHERE id='aaaaaaaaaaaa'").fetchone()
-    assert (paste['title'], paste['content'], paste['language'], paste['views']) == ('T', 'hello', 'python', 7)
-    assert conn.execute("SELECT COUNT(*) FROM pastes WHERE id='bbbbbbbbbbbb'").fetchone()[0] == 0
-    c = conn.execute('SELECT nick, content FROM comments').fetchall()
-    assert [(r['nick'], r['content']) for r in c] == [('bob', 'nice')]
-    # The unreadable encrypted paste is preserved, not dropped.
-    assert conn.execute('SELECT COUNT(*) FROM pastes_encrypted_legacy').fetchone()[0] == 2
-
-
 # ── Threaded replies ──────────────────────────────────────────────────────────
 
 def test_replies_are_nested(client):
@@ -467,28 +430,6 @@ def test_comment_tree_helper_handles_orphans():
     tree = papyrus._comment_tree(rows)
     assert [n['id'] for n in tree] == ['a', 'z']
     assert [n['id'] for n in tree[0]['children']] == ['b']
-
-
-def test_comments_table_gains_parent_id_column(tmp_path, monkeypatch):
-    path = str(tmp_path / 'prev.db')
-    conn = sqlite3.connect(path)
-    conn.executescript("""
-        CREATE TABLE pastes (id TEXT PRIMARY KEY, title TEXT NOT NULL DEFAULT 'Untitled', content TEXT NOT NULL,
-            language TEXT NOT NULL DEFAULT 'text', created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            expires_at TEXT, views INTEGER DEFAULT 0, deletion_token TEXT, discussions_enabled INTEGER DEFAULT 0);
-        CREATE TABLE comments (id TEXT PRIMARY KEY, paste_id TEXT NOT NULL, nick TEXT, content TEXT NOT NULL,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP);
-        INSERT INTO comments (id, paste_id, content) VALUES ('c1', 'p1', 'old comment');
-    """)
-    conn.commit()
-    conn.close()
-    monkeypatch.setattr(papyrus, 'DATABASE', path)
-    monkeypatch.setattr(papyrus, '_db_initialized', False)
-    monkeypatch.setattr(papyrus, '_cleanup_running', True)
-    papyrus.init_db()
-    conn = sqlite3.connect(path)
-    assert 'parent_id' in {r[1] for r in conn.execute('PRAGMA table_info(comments)')}
-    assert conn.execute('SELECT content, parent_id FROM comments').fetchone() == ('old comment', None)
 
 
 # ── Text only ─────────────────────────────────────────────────────────────────
@@ -956,27 +897,6 @@ def test_editor_page_has_the_gist_style_controls(client):
     assert hints['extensions']['sh'] == 'bash' and hints['names']['dockerfile'] == 'docker'
 
 
-def test_filename_column_is_added_to_older_databases(tmp_path, monkeypatch):
-    path = str(tmp_path / 'prev.db')
-    conn = sqlite3.connect(path)
-    conn.executescript("""
-        CREATE TABLE pastes (id TEXT PRIMARY KEY, title TEXT NOT NULL DEFAULT 'Untitled', content TEXT NOT NULL,
-            language TEXT NOT NULL DEFAULT 'text', created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            expires_at TEXT, views INTEGER DEFAULT 0, deletion_token TEXT, discussions_enabled INTEGER DEFAULT 0);
-        INSERT INTO pastes (id, title, content) VALUES ('a0b0c0d0e0f1', 'Old paste', 'hello');
-    """)
-    conn.commit()
-    conn.close()
-    monkeypatch.setattr(papyrus, 'DATABASE', path)
-    monkeypatch.setattr(papyrus, '_db_initialized', False)
-    monkeypatch.setattr(papyrus, '_cleanup_running', True)
-    papyrus.init_db()
-    conn = sqlite3.connect(path)
-    assert conn.execute("SELECT title, filename FROM pastes WHERE id='a0b0c0d0e0f1'").fetchone() == ('Old paste', '')
-    papyrus.app.config['TESTING'] = True
-    assert 'untitled' in papyrus.app.test_client().get('/a0b0c0d0e0f1').get_data(as_text=True)
-
-
 def test_nothing_is_saved_in_the_browser_while_typing(client):
     js = ''.join(open(os.path.join(os.path.dirname(papyrus.__file__), 'static', 'js', f), encoding='utf-8').read()
                  for f in ('app.js', 'paste_create.js', 'paste_view.js'))
@@ -1007,7 +927,7 @@ def test_curl_endpoint_prints_paste_raw_and_removal_urls(client):
 
 
 def test_curl_endpoint_also_takes_a_urlencoded_form(client):
-    r = client.post('/curl', data={'raw': 'x', 'title': 'T', 'expiry': '1week'})
+    r = client.post('/curl', data={'raw': 'x', 'title': 'T', 'expires_in': '1week'})
     assert r.status_code == 200 and curl_urls(r)
     row = db().execute('SELECT title, expires_at FROM pastes').fetchone()
     assert row['title'] == 'T' and row['expires_at']
@@ -1046,7 +966,7 @@ def test_json_create_returns_the_removal_link_and_sets_the_owner_cookie(client, 
     assert 'HttpOnly' in cookie and 'SameSite=Lax' in cookie and f"Path=/{made['paste_id']}" in cookie
     max_age = int(re.search(r'Max-Age=(\d+)', cookie).group(1))
     assert 3500 < max_age <= 3600                                  # persistent, until the paste expires
-    monkeypatch.setitem(papyrus._pastes, 'allow_expiry_options', ['1hour', 'never'])
+    set_expiries(monkeypatch, {'1hour': 3600, 'never': None})
     never = client.post('/create', json={'content': 'x', 'expires_in': 'never'}).headers['Set-Cookie']
     assert int(re.search(r'Max-Age=(\d+)', never).group(1)) == 365 * 86400
 
@@ -1155,36 +1075,175 @@ def test_the_old_json_delete_endpoint_is_gone(client):
     assert client.get(f"/{made['paste_id']}").status_code == 200
 
 
-def test_plaintext_deletion_tokens_from_older_databases_are_hashed_and_keep_working(tmp_path, monkeypatch):
-    path = str(tmp_path / 'old.db')
-    conn = sqlite3.connect(path)
-    conn.executescript("""
-        CREATE TABLE pastes (id TEXT PRIMARY KEY, title TEXT NOT NULL DEFAULT 'Untitled', content TEXT NOT NULL,
-            language TEXT NOT NULL DEFAULT 'text', created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            expires_at TEXT, views INTEGER DEFAULT 0, deletion_token TEXT, discussions_enabled INTEGER DEFAULT 0);
-        INSERT INTO pastes (id, content, deletion_token) VALUES ('a0b0c0d0e0f1', 'one', 'old-plain-token');
-        INSERT INTO pastes (id, content, deletion_token) VALUES ('a0b0c0d0e0f2', 'two', NULL);
-    """)
-    conn.commit()
-    conn.close()
-    monkeypatch.setattr(papyrus, 'DATABASE', path)
-    monkeypatch.setattr(papyrus, '_db_initialized', False)
-    monkeypatch.setattr(papyrus, '_cleanup_running', True)
-    papyrus.init_db()
-    conn = sqlite3.connect(path)
-    cols = {r[1] for r in conn.execute('PRAGMA table_info(pastes)')}
-    assert 'removal_hash' in cols and 'deletion_token' not in cols
-    rows = dict(conn.execute('SELECT id, removal_hash FROM pastes'))
-    assert rows['a0b0c0d0e0f1'] == papyrus._hash_token('old-plain-token') and rows['a0b0c0d0e0f2'] == ''
-    assert 'old-plain-token' not in str(rows)
-    c = papyrus.app.test_client()
-    assert c.get('/remove/old-plain-token').status_code == 200          # the token people already hold still works
-    assert c.post('/remove/old-plain-token').status_code == 200
-    assert sqlite3.connect(path).execute('SELECT COUNT(*) FROM pastes').fetchone()[0] == 1
-    assert c.get('/remove/').status_code == 404
-
-
 def test_no_script_ever_sees_a_removal_token(client):
     js = ''.join(open(os.path.join(os.path.dirname(papyrus.__file__), 'static', 'js', f), encoding='utf-8').read()
                  for f in ('app.js', 'paste_create.js', 'paste_view.js'))
     assert 'localStorage.setItem(\'del_' not in js and 'removal_token' not in js and 'deletion_token' not in js
+
+
+# ── Configurable expiry times ─────────────────────────────────────────────────
+
+@pytest.mark.parametrize('value,seconds', [
+    (3600, 3600), (90, 90), (1.5, 1.5), ('10m', 600), ('36h', 129600), ('3d', 259200), ('2w', 1209600),
+    ('1y', 31536000), (' 5 M ', 300), ('45s', 45),
+])
+def test_parse_duration(value, seconds):
+    assert papyrus._parse_duration(value).total_seconds() == seconds
+
+
+@pytest.mark.parametrize('value', [None, 'never'])
+def test_parse_duration_never(value):
+    assert papyrus._parse_duration(value) is None
+
+
+@pytest.mark.parametrize('value', [0, -5, True, False, '', '0m', '5x', 'abc', '1.5h', '10', 'm5', ['1d'], {}])
+def test_parse_duration_rejects_nonsense(value):
+    with pytest.raises(ValueError):
+        papyrus._parse_duration(value)
+
+
+@pytest.mark.parametrize('seconds,label', [
+    (60, '1 minute'), (90 * 60, '90 minutes'), (3600, '1 hour'), (36 * 3600, '36 hours'), (86400, '1 day'),
+    (3 * 86400, '3 days'), (604800, '1 week'), (14 * 86400, '2 weeks'), (30 * 86400, '1 month'),
+    (60 * 86400, '2 months'), (365 * 86400, '1 year'), (45, '45 seconds'),
+])
+def test_humanize(seconds, label):
+    assert papyrus._humanize(datetime.timedelta(seconds=seconds)) == label
+    assert papyrus._humanize(None) == 'Never'
+
+
+def test_expiries_map_in_every_form():
+    options, default = papyrus._load_expiry_options({
+        'expiries': {'10min': '10m', '1day': 86400, 'later': {'duration': '2w', 'label': 'Two weeks, tops'},
+                     'forever': None, 'also-never': {'duration': None}},
+        'default_expiry': '1day'})
+    assert [o['value'] for o in options] == ['10min', '1day', 'later', 'forever', 'also-never']   # order kept
+    assert [o['label'] for o in options] == ['10 minutes', '1 day', 'Two weeks, tops', 'Never', 'Never']
+    assert [o['delta'] and o['delta'].total_seconds() for o in options] == [600, 86400, 1209600, None, None]
+    assert default == '1day'
+
+
+def test_the_default_defaults_to_the_first_expiry():
+    assert papyrus._load_expiry_options({'expiries': {'a': 60, 'b': 120}})[1] == 'a'
+
+
+@pytest.mark.parametrize('cfg,message', [
+    ({'expiries': {}}, 'at least one'),
+    ({'expiries': []}, 'at least one'),
+    ({'expiries': {'Bad Name': 60}}, 'lowercase'),
+    ({'expiries': {'x' * 33: 60}}, 'lowercase'),
+    ({'expiries': {'ok': 0}}, "'ok'"),
+    ({'expiries': {'ok': '5x'}}, 'bad duration'),
+    ({'expiries': {'ok': True}}, 'bad duration'),
+    ({'expiries': {'ok': {'label': 'no duration'}}}, 'needs a "duration"'),
+    ({'expiries': {'a': 60}, 'default_expiry': 'zzz'}, 'default_expiry'),
+    ({'allow_expiry_options': ['1day'], 'expiry_labels': {}}, 'no longer used'),
+    ({}, 'pastes.expiries is missing'),
+    ({'expiries': {'x': 10 ** 18}}, 'too long'),
+])
+def test_broken_expiry_config_fails_loudly(cfg, message):
+    with pytest.raises(RuntimeError) as exc:
+        papyrus._load_expiry_options(cfg)
+    assert message in str(exc.value)
+
+
+def expires_in_seconds(pid):
+    value = db().execute('SELECT expires_at FROM pastes WHERE id=?', (pid,)).fetchone()[0]
+    return None if value is None else (papyrus._parse_expiry(value) - datetime.datetime.now(UTC)).total_seconds()
+
+
+def test_custom_expiries_decide_when_a_paste_expires(client, monkeypatch):
+    set_expiries(monkeypatch, {'10min': '10m', 'twohours': 7200, 'forever': None}, default='twohours')
+    assert 590 < expires_in_seconds(create(client, expires_in='10min')['paste_id']) <= 600
+    assert 7190 < expires_in_seconds(create(client, expires_in='twohours')['paste_id']) <= 7200
+    assert expires_in_seconds(create(client, expires_in='forever')['paste_id']) is None
+
+
+def test_no_expiry_given_means_the_default(client, monkeypatch):
+    set_expiries(monkeypatch, {'short': '5m', 'long': '1d'}, default='long')
+    for body in ({'content': 'x'}, {'content': 'x', 'expires_in': ''}, {'content': 'x', 'expires_in': None}):
+        pid = client.post('/create', json=body).get_json()['paste_id']
+        assert 86300 < expires_in_seconds(pid) <= 86400
+    r = client.post('/create?title=t', data='x', content_type='text/plain')        # curl without expires_in
+    assert 86300 < expires_in_seconds(curl_urls(r)['Paste URL'].rsplit('/', 1)[1]) <= 86400
+
+
+def test_an_unknown_expiry_is_refused_not_silently_defaulted(client, monkeypatch):
+    set_expiries(monkeypatch, {'short': '5m', 'long': '1d'})
+    r = client.post('/create', json={'content': 'x', 'expires_in': '1year'})
+    assert r.status_code == 400 and 'short, long' in r.get_json()['error'] and '1year' in r.get_json()['error']
+    r = client.post('/create?expires_in=forever', data='x', content_type='text/plain')
+    assert r.status_code == 400 and r.mimetype == 'text/plain' and 'short, long' in r.get_data(as_text=True)
+    r = client.post('/curl', data={'raw': 'x', 'expires_in': 'x' * 500})
+    assert r.status_code == 400 and len(r.get_data(as_text=True)) < 200
+    assert db().execute('SELECT COUNT(*) FROM pastes').fetchone()[0] == 0
+
+
+def test_a_far_future_expiry_counts_as_never(client, monkeypatch):
+    set_expiries(monkeypatch, {'ages': 10 ** 12})          # ~31,700 years: past the year 9999 the calendar ends
+    assert expires_in_seconds(create(client, expires_in='ages')['paste_id']) is None
+
+
+def test_the_owner_cookie_follows_the_chosen_expiry(client, monkeypatch):
+    set_expiries(monkeypatch, {'10min': '10m', 'forever': None})
+    cookie = client.post('/create', json={'content': 'x', 'expires_in': '10min'}).headers['Set-Cookie']
+    assert 500 < int(re.search(r'Max-Age=(\d+)', cookie).group(1)) <= 600
+
+
+def test_editor_menu_lists_the_configured_expiries(client, monkeypatch):
+    set_expiries(monkeypatch, {'10min': '10m', 'custom': {'duration': '3d', 'label': 'Three days <b>'}, 'never': None},
+                 default='custom')
+    html = client.get('/').get_data(as_text=True)
+    menu = re.search(r'<select id="expires_in".*?</select>', html, re.S).group(0)
+    assert re.findall(r'value="([^"]+)"', menu) == ['10min', 'custom', 'never']
+    assert re.findall(r'>([^<]+)</option>', menu) == ['10 minutes', 'Three days &lt;b&gt;', 'Never']   # escaped
+    assert re.search(r'<option value="custom"\s+selected', menu)
+    assert '1year' not in menu
+
+
+def test_api_config_exposes_the_expiries(client, monkeypatch):
+    set_expiries(monkeypatch, {'a': '5m', 'b': '1d'}, default='b')
+    pastes = client.get('/api/config').get_json()['pastes']
+    assert pastes['default_expiry'] == 'b'
+    assert pastes['expiry_options'] == [{'value': 'a', 'label': '5 minutes'}, {'value': 'b', 'label': '1 day'}]
+    assert 'allow_expiry_options' not in pastes and 'expiry_labels' not in pastes
+
+
+def test_the_shipped_example_config_is_valid_and_readable():
+    cfg = json.load(open(os.path.join(os.path.dirname(papyrus.__file__), 'config.example.json')))['pastes']
+    options, default = papyrus._load_expiry_options(cfg)
+    assert [o['value'] for o in options] == ['1hour', '1day', '1week', '1month', '1year']
+    assert [o['label'] for o in options] == ['1 hour', '1 day', '1 week', '1 month', '1 year'] and default == '1year'
+    assert 'allow_expiry_options' not in cfg and 'expiry_labels' not in cfg
+
+
+# ── Database layout ───────────────────────────────────────────────────────────
+
+def test_a_fresh_database_gets_the_current_layout(client):
+    conn = db()
+    assert conn.execute('PRAGMA user_version').fetchone()[0] == papyrus.SCHEMA_VERSION
+    tables = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+    assert {'pastes', 'comments', 'reports', 'rate_limits'} <= tables
+    assert not [t for t in tables if 'legacy' in t]
+
+
+def test_starting_twice_keeps_the_data(client):
+    pid = create(client)['paste_id']
+    papyrus._db_initialized = False
+    papyrus.init_db()
+    assert client.get(f'/raw/{pid}').status_code == 200
+
+
+def test_a_database_from_an_earlier_development_version_is_refused_with_a_clear_message(tmp_path, monkeypatch):
+    path = str(tmp_path / 'old.db')
+    conn = sqlite3.connect(path)
+    conn.execute('CREATE TABLE pastes (id TEXT PRIMARY KEY, encrypted_data TEXT)')   # any layout without our version
+    conn.commit()
+    conn.close()
+    monkeypatch.setattr(papyrus, 'DATABASE', path)
+    monkeypatch.setattr(papyrus, '_db_initialized', False)
+    with pytest.raises(RuntimeError) as exc:
+        papyrus.init_db()
+    assert 'delete or move' in str(exc.value) and path in str(exc.value)
+    assert sqlite3.connect(path).execute('PRAGMA user_version').fetchone()[0] == 0     # left untouched
+    monkeypatch.setattr(papyrus, '_db_initialized', True)       # (so the client fixture isn't confused afterwards)

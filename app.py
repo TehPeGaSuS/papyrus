@@ -317,9 +317,6 @@ def _db():
 _db_init_lock = threading.Lock()
 _db_initialized = False
 
-def _columns(conn, table):
-    return {row[1] for row in conn.execute(f'PRAGMA table_info({table})')}
-
 def _create_tables(conn):
     conn.execute('''
         CREATE TABLE IF NOT EXISTS pastes (
@@ -335,9 +332,6 @@ def _create_tables(conn):
             discussions_enabled INTEGER DEFAULT 0
         )
     ''')
-    if 'filename' not in _columns(conn, 'pastes'):  # created before filenames existed
-        conn.execute("ALTER TABLE pastes ADD COLUMN filename TEXT NOT NULL DEFAULT ''")
-    _upgrade_removal_tokens(conn)
     conn.execute('CREATE INDEX IF NOT EXISTS idx_pastes_removal ON pastes(removal_hash)')
     conn.execute('CREATE INDEX IF NOT EXISTS idx_pastes_created ON pastes(created_at)')
     conn.execute('''
@@ -350,8 +344,6 @@ def _create_tables(conn):
             created_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
     ''')
-    if 'parent_id' not in _columns(conn, 'comments'):  # created before replies existed
-        conn.execute('ALTER TABLE comments ADD COLUMN parent_id TEXT')
     conn.execute('CREATE INDEX IF NOT EXISTS idx_comments_paste ON comments(paste_id)')
     conn.execute('''
         CREATE TABLE IF NOT EXISTS reports (
@@ -375,67 +367,13 @@ def _create_tables(conn):
     ''')
     conn.execute('CREATE INDEX IF NOT EXISTS idx_rate_limit_ts ON rate_limits(timestamp)')
 
-_SHA256_RE = re.compile(r'^[0-9a-f]{64}$')
-
 def _hash_token(token):
     return hashlib.sha256(token.encode('utf-8')).hexdigest()
 
 def _new_removal_token():
     return secrets.token_urlsafe(24)
 
-def _upgrade_removal_tokens(conn):
-    """Older databases kept the deletion token in plain text; keep it working, but only as a hash."""
-    if 'deletion_token' in _columns(conn, 'pastes'):
-        conn.execute('ALTER TABLE pastes RENAME COLUMN deletion_token TO removal_hash')
-    for rowid, value in conn.execute('SELECT rowid, removal_hash FROM pastes').fetchall():
-        if value is None:
-            conn.execute("UPDATE pastes SET removal_hash = '' WHERE rowid = ?", (rowid,))
-        elif value and not _SHA256_RE.match(value):
-            conn.execute('UPDATE pastes SET removal_hash = ? WHERE rowid = ?', (_hash_token(value), rowid))
-
-def _migrate_encrypted_schema(conn):
-    """Move an old end-to-end-encrypted database to the plaintext schema.
-
-    Pastes that were stored unencrypted are carried over. Encrypted ones cannot
-    be read by the server, so they stay untouched in `pastes_encrypted_legacy`.
-    """
-    conn.execute('ALTER TABLE pastes RENAME TO pastes_encrypted_legacy')
-    old_comments = conn.execute("SELECT name FROM sqlite_master WHERE name='comments'").fetchone()
-    if old_comments and 'nick' not in _columns(conn, 'comments'):
-        conn.execute('ALTER TABLE comments RENAME TO comments_encrypted_legacy')
-    _create_tables(conn)
-
-    kept = skipped = 0
-    for row in conn.execute('SELECT * FROM pastes_encrypted_legacy').fetchall():
-        try:
-            data = json.loads(row['encrypted_data'])
-            if not isinstance(data, dict):
-                raise ValueError
-        except (ValueError, TypeError):
-            skipped += 1
-            continue
-        conn.execute(
-            'INSERT INTO pastes (id, title, content, language, created_at, expires_at, views,'
-            ' removal_hash, discussions_enabled) VALUES (?,?,?,?,?,?,?,?,?)',
-            (row['id'], _clean_title(data.get('title')), str(data.get('content') or ''),
-             _clean_language(data.get('language')), row['created_at'], row['expires_at'],
-             row['views'], _hash_token(row['deletion_token']) if row['deletion_token'] else '',
-             row['discussions_enabled']))
-        kept += 1
-        # Old comments held a JSON blob ({content, nick}), or ciphertext we can't read.
-        legacy = conn.execute("SELECT name FROM sqlite_master WHERE name='comments_encrypted_legacy'").fetchone()
-        if legacy:
-            for c in conn.execute('SELECT * FROM comments_encrypted_legacy WHERE paste_id = ?',
-                                  (row['id'],)).fetchall():
-                try:
-                    blob = json.loads(c['content'])
-                    conn.execute('INSERT INTO comments (id, paste_id, nick, content, created_at) VALUES (?,?,?,?,?)',
-                                 (c['id'], row['id'], str(blob.get('nick') or '')[:32],
-                                  str(blob['content']), c['created_at']))
-                except (ValueError, TypeError, KeyError, AttributeError):
-                    pass
-    print(f'[Migration] Plaintext schema: kept {kept} paste(s); {skipped} encrypted paste(s) '
-          f'remain in pastes_encrypted_legacy.', file=sys.stderr, flush=True)
+SCHEMA_VERSION = 1   # stored in the database (PRAGMA user_version); bump it when the layout changes
 
 def init_db():
     """Initialise the database. Thread-safe and idempotent: runs DDL only once per process."""
@@ -444,18 +382,16 @@ def init_db():
         if _db_initialized:
             return
         conn = sqlite3.connect(DATABASE)
-        conn.row_factory = sqlite3.Row
         try:
             with conn:
-                if 'encrypted_data' in _columns(conn, 'pastes'):
-                    _migrate_encrypted_schema(conn)
+                existing = conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='pastes'").fetchone()
+                if existing and conn.execute('PRAGMA user_version').fetchone()[0] != SCHEMA_VERSION:
+                    raise RuntimeError(
+                        f'{DATABASE} was created by an earlier development version of Papyrus and its layout '
+                        f'is out of date. There is no migration: delete or move that file and Papyrus will '
+                        f'create a fresh one.')
                 _create_tables(conn)
-                # Older rows stored 'YYYY-MM-DD HH:MM:SS+00:00' (space); expiry comparisons are
-                # string-based, so normalise to the ISO 'T' form.
-                conn.execute(
-                    "UPDATE pastes SET expires_at = replace(expires_at, ' ', 'T') "
-                    "WHERE expires_at LIKE '____-__-__ %'"
-                )
+                conn.execute(f'PRAGMA user_version = {SCHEMA_VERSION}')
         finally:
             conn.close()
         _db_initialized = True
@@ -559,28 +495,11 @@ def _parse_expiry(value):
 def _is_expired(value):
     return bool(value) and _parse_expiry(value) < datetime.datetime.now(_UTC)
 
-def _ensure_rate_limits_table(conn):
-    """Create the rate_limits table if it doesn't exist (migration safety net)."""
-    conn.execute('''
-        CREATE TABLE IF NOT EXISTS rate_limits (
-            ip_address    TEXT,
-            timestamp     REAL,
-            PRIMARY KEY (ip_address, timestamp)
-        )
-    ''')
-    conn.execute('CREATE INDEX IF NOT EXISTS idx_rate_limit_ts ON rate_limits(timestamp)')
-    conn.commit()
-
 def _rate_limit_count(conn, key, window):
-    try:
-        return conn.execute(
-            'SELECT COUNT(*) FROM rate_limits WHERE ip_address = ? AND timestamp > ?',
-            (key, time.time() - window)
-        ).fetchone()[0]
-    except sqlite3.OperationalError:
-        # Table missing (pre-migration DB) — create it and proceed.
-        _ensure_rate_limits_table(conn)
-        return 0
+    return conn.execute(
+        'SELECT COUNT(*) FROM rate_limits WHERE ip_address = ? AND timestamp > ?',
+        (key, time.time() - window)
+    ).fetchone()[0]
 
 def _is_rate_limited(remote_ip, key_prefix, window, limit):
     """Read-only check: has this IP already used up its budget?"""
@@ -589,7 +508,6 @@ def _is_rate_limited(remote_ip, key_prefix, window, limit):
 
 def _record_hit(remote_ip, key_prefix):
     with _db() as conn:
-        _ensure_rate_limits_table(conn)
         # INSERT OR IGNORE: the primary key is (ip, timestamp)
         conn.execute('INSERT OR IGNORE INTO rate_limits (ip_address, timestamp) VALUES (?, ?)',
                      (f"{key_prefix}:{remote_ip}", time.time()))
@@ -671,23 +589,91 @@ def _human_size(n):
             return f'{n} B' if unit == 'B' else f'{n:.1f} {unit}'
         n /= 1024
 
-_EXPIRY_DELTAS = {
-    '1hour':  datetime.timedelta(hours=1),
-    '1day':   datetime.timedelta(days=1),
-    '1week':  datetime.timedelta(weeks=1),
-    '1month': datetime.timedelta(days=30),
-    '1year':  datetime.timedelta(days=365),
-}
+# Expiry choices are configured in config.json as a map from a name to a duration, like pinnwand:
+#   "expiries": {"1hour": 3600, "3days": "3d", "forever": null}
+# A duration is a number of seconds, a short form ("30m", "36h", "3d", "2w", "1y"), or null for never.
+# A choice can also be {"duration": ..., "label": "Shown in the menu"}; labels default to the duration.
+_DURATION_UNITS = {'s': 1, 'm': 60, 'h': 3600, 'd': 86400, 'w': 7 * 86400, 'y': 365 * 86400}
+_DURATION_RE    = re.compile(r'^\s*(\d+)\s*([smhdwy])\s*$', re.I)
+_OPTION_VALUE_RE = re.compile(r'^[a-z0-9_-]{1,32}$')
+_LABEL_UNITS = [('year', 365 * 86400), ('month', 30 * 86400), ('week', 7 * 86400), ('day', 86400),
+                ('hour', 3600), ('minute', 60), ('second', 1)]
 
-def _expiry_from_choice(choice):
-    """Return an ISO expires_at string for an expiry option, or None for 'never'."""
-    allowed = set(_pastes.get('allow_expiry_options', ['1year']))
-    if choice not in allowed:
-        choice = _pastes.get('default_expiry', 'never')
-    delta = _EXPIRY_DELTAS.get(choice)
-    if delta is None:  # 'never', or an option the config lists but we don't know
+def _parse_duration(value):
+    """A number of seconds, '10m', '36h', '3d', '2w', '1y' -> timedelta; None or 'never' -> None."""
+    if value is None or value == 'never':
         return None
-    return (datetime.datetime.now(_UTC) + delta).isoformat()
+    try:
+        if isinstance(value, (int, float)) and not isinstance(value, bool) and value > 0:
+            return datetime.timedelta(seconds=value)
+        match = _DURATION_RE.match(value) if isinstance(value, str) else None
+        if match and int(match.group(1)) > 0:
+            return datetime.timedelta(seconds=int(match.group(1)) * _DURATION_UNITS[match.group(2).lower()])
+    except OverflowError:
+        raise ValueError(f'{value!r} is too long: use null for an expiry that never comes') from None
+    raise ValueError(f'bad duration {value!r}: use a number of seconds, a short form like "30m", "3d" or '
+                     f'"2w" (units s, m, h, d, w, y), or null for no expiry')
+
+def _humanize(delta):
+    """'1 hour', '3 days', '90 minutes': the largest unit that divides the duration evenly."""
+    if delta is None:
+        return 'Never'
+    seconds = int(delta.total_seconds())
+    for unit, size in _LABEL_UNITS:
+        if seconds % size == 0:
+            n = seconds // size
+            return f"{n} {unit}{'' if n == 1 else 's'}"
+    return f'{seconds} seconds'
+
+def _load_expiry_options(pastes_cfg):
+    """The configured expiry choices as [{'value', 'label', 'delta'}], plus the default value.
+
+    Raises RuntimeError for a broken configuration, so a typo fails at startup instead of
+    quietly meaning "never expires".
+    """
+    configured = pastes_cfg.get('expiries')
+    if configured is None:
+        old = ' (allow_expiry_options and expiry_labels are no longer used)' \
+            if any(k in pastes_cfg for k in ('allow_expiry_options', 'expiry_labels')) else ''
+        raise RuntimeError(f'pastes.expiries is missing{old}: list the choices as a map, for example '
+                           f'{{"1day": 86400, "1week": "7d"}}')
+    if not isinstance(configured, dict) or not configured:
+        raise RuntimeError('pastes.expiries must be a map with at least one entry, for example {"1day": 86400}')
+    options = []
+    for value, spec in configured.items():
+        if not _OPTION_VALUE_RE.match(value):
+            raise RuntimeError(f"pastes.expiries: the name '{value}' must be lowercase letters, digits, '-' or "
+                               f"'_' (up to 32 characters)")
+        label = None
+        if isinstance(spec, dict):
+            if 'duration' not in spec:
+                raise RuntimeError(f"pastes.expiries '{value}': an object needs a \"duration\" (null for never)")
+            label, spec = spec.get('label'), spec['duration']
+        try:
+            delta = _parse_duration(spec)
+        except ValueError as e:
+            raise RuntimeError(f"pastes.expiries '{value}': {e}") from None
+        options.append({'value': value, 'label': str(label) if label else _humanize(delta), 'delta': delta})
+    default = pastes_cfg.get('default_expiry', options[0]['value'])
+    if default not in {o['value'] for o in options}:
+        raise RuntimeError(f"pastes.default_expiry '{default}' is not one of: {', '.join(o['value'] for o in options)}")
+    return options, default
+
+_EXPIRY_OPTIONS, _DEFAULT_EXPIRY = _load_expiry_options(_pastes)
+
+def _expiry_option(choice):
+    """The option for a submitted value; empty means the default, anything else unknown is None."""
+    wanted = _DEFAULT_EXPIRY if choice in (None, '') else choice
+    return next((o for o in _EXPIRY_OPTIONS if o['value'] == wanted), None)
+
+def _expires_at(option):
+    """ISO timestamp for an option, or None when it never expires."""
+    if option['delta'] is None:
+        return None
+    try:
+        return (datetime.datetime.now(_UTC) + option['delta']).isoformat()
+    except OverflowError:                            # so long that it is effectively "never"
+        return None
 
 # Prism language ids differ from ours for a few languages; False = no highlighting.
 _PRISM_LANG_MAP = {'text': False, 'html': 'markup', 'xml': 'markup'}
@@ -699,7 +685,8 @@ def _prism_language(language):
 
 @app.route('/')
 def index():
-    return render_template('index.html', language_hints=_language_hints())
+    return render_template('index.html', language_hints=_language_hints(),
+                           expiry_options=_EXPIRY_OPTIONS, default_expiry=_DEFAULT_EXPIRY)
 
 @app.route('/favicon.ico')
 def favicon():
@@ -732,7 +719,11 @@ def _store_paste(data):
     else:
         language = _detect_language(filename) or _pastes.get('default_language', 'text')
     discussions = bool(data.get('discussions', False))
-    expires_at = _expiry_from_choice(data.get('expires_in') or _pastes.get('default_expiry', 'never'))
+    expiry = _expiry_option(data.get('expires_in'))
+    if expiry is None:
+        raise _PasteError(f"Unknown expiry {str(data.get('expires_in'))[:40]!r}. Use one of: "
+                          f"{', '.join(o['value'] for o in _EXPIRY_OPTIONS)}", 400)
+    expires_at = _expires_at(expiry)
 
     token = _new_removal_token()
     with _db() as conn:
@@ -812,7 +803,7 @@ def create_paste_curl():
         return _text_response('Rate limit exceeded. Please wait a few minutes.\n', 429)
     form = request.form
     data = {'content': form.get('raw'), 'title': form.get('title'), 'filename': form.get('filename'),
-            'language': form.get('language'), 'expires_in': form.get('expires_in') or form.get('expiry'),
+            'language': form.get('language'), 'expires_in': form.get('expires_in'),
             'discussions': _flag(form.get('discussions'))}
     try:
         paste_id, token, _ = _store_paste(data)
@@ -910,9 +901,8 @@ def get_client_config():
         },
         'pastes': {
             'default_language':     _pastes.get('default_language', 'text'),
-            'default_expiry':       _pastes.get('default_expiry', 'never'),
-            'allow_expiry_options': _pastes.get('allow_expiry_options', []),
-            'expiry_labels':        _pastes.get('expiry_labels', {}),
+            'default_expiry':       _DEFAULT_EXPIRY,
+            'expiry_options':       [{'value': o['value'], 'label': o['label']} for o in _EXPIRY_OPTIONS],
         },
     })
 
