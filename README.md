@@ -14,7 +14,7 @@ SQLite for storage, no build step.
 - **Gist-style editor**: description, filename (the extension picks the syntax highlighting), indent mode
   (spaces or tabs), indent size (2, 4, 8), soft wrap or no wrap, Tab/Shift+Tab indenting and auto-indent
 - **Syntax highlighting** with Prism.js, line numbers, line-range links (`?L=5-12`), word wrap toggle
-- **Expiry**: 1 hour, 1 day, 1 week, 1 month, 1 year or never (configurable)
+- **Expiry**: pastes are temporary: 1 hour, 1 day, 1 week or 1 month, one week by default (configurable)
 - **Threaded discussions**: optional per-paste comments and nested replies, each in its own box,
   written in Markdown (code fences, tables, links) with a Write/Preview tab. Rendered and sanitised
   on the server
@@ -86,6 +86,8 @@ API (`expires_in=1day`) and `curl` use; the durations are yours to choose:
 },
 "default_expiry": "1hour"
 ```
+
+Papyrus is for temporary pastes, so the shipped choices stop at one month and the default is one week.
 
 A duration is a number of seconds, a short form (`30s`, `10m`, `36h`, `3d`, `2w`, `1y`), or `null` for a paste
 that never expires. The menu label is made from the duration ("10 minutes", "3 days", "Never"); to word it

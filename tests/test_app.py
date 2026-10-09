@@ -1170,8 +1170,8 @@ def test_no_expiry_given_means_the_default(client, monkeypatch):
 
 def test_an_unknown_expiry_is_refused_not_silently_defaulted(client, monkeypatch):
     set_expiries(monkeypatch, {'short': '5m', 'long': '1d'})
-    r = client.post('/create', json={'content': 'x', 'expires_in': '1year'})
-    assert r.status_code == 400 and 'short, long' in r.get_json()['error'] and '1year' in r.get_json()['error']
+    r = client.post('/create', json={'content': 'x', 'expires_in': '1decade'})
+    assert r.status_code == 400 and 'short, long' in r.get_json()['error'] and '1decade' in r.get_json()['error']
     r = client.post('/create?expires_in=forever', data='x', content_type='text/plain')
     assert r.status_code == 400 and r.mimetype == 'text/plain' and 'short, long' in r.get_data(as_text=True)
     r = client.post('/curl', data={'raw': 'x', 'expires_in': 'x' * 500})
@@ -1198,7 +1198,7 @@ def test_editor_menu_lists_the_configured_expiries(client, monkeypatch):
     assert re.findall(r'value="([^"]+)"', menu) == ['10min', 'custom', 'never']
     assert re.findall(r'>([^<]+)</option>', menu) == ['10 minutes', 'Three days &lt;b&gt;', 'Never']   # escaped
     assert re.search(r'<option value="custom"\s+selected', menu)
-    assert '1year' not in menu
+    assert '1month' not in menu
 
 
 def test_api_config_exposes_the_expiries(client, monkeypatch):
@@ -1212,8 +1212,10 @@ def test_api_config_exposes_the_expiries(client, monkeypatch):
 def test_the_shipped_example_config_is_valid_and_readable():
     cfg = json.load(open(os.path.join(os.path.dirname(papyrus.__file__), 'config.example.json')))['pastes']
     options, default = papyrus._load_expiry_options(cfg)
-    assert [o['value'] for o in options] == ['1hour', '1day', '1week', '1month', '1year']
-    assert [o['label'] for o in options] == ['1 hour', '1 day', '1 week', '1 month', '1 year'] and default == '1year'
+    assert [o['value'] for o in options] == ['1hour', '1day', '1week', '1month']
+    assert [o['label'] for o in options] == ['1 hour', '1 day', '1 week', '1 month'] and default == '1week'
+    # Papyrus is for temporary pastes: nothing in the shipped config lives longer than a month.
+    assert all(o['delta'] is not None and o['delta'] <= datetime.timedelta(days=30) for o in options)
     assert 'allow_expiry_options' not in cfg and 'expiry_labels' not in cfg
 
 
