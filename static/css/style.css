@@ -763,3 +763,10 @@ a.comment-reply:hover { text-decoration: underline; color: var(--primary); }
 .block-dialog { width: min(32rem, 94vw); }
 .block-field { display: flex; flex-direction: column; gap: 0.25rem; margin-top: 0.75rem; font-size: 0.8rem; color: var(--text-sub); }
 .block-form + .admin-header, .block-form + .table-responsive + .admin-header { margin-top: 2.5rem; }
+
+/* JetBrains Mono and Fira Code join characters into arrows and operators (<- becomes a left arrow, != a
+   not-equal sign). A pastebin must show exactly what the text contains, so code never gets ligatures. */
+pre, code, kbd, samp, textarea, .removal-url {
+    font-variant-ligatures: none;
+    font-feature-settings: "liga" 0, "calt" 0;
+}

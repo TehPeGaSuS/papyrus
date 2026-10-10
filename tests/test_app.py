@@ -2098,3 +2098,9 @@ def test_one_click_blocks_ask_how_long_first(client, monkeypatch):
     row = db().execute('SELECT note, expires_at FROM blocks').fetchone()
     until = datetime.datetime.fromisoformat(row['expires_at'])
     assert row['note'] == 'spam run' and datetime.timedelta(hours=23) < until - datetime.datetime.now(datetime.timezone.utc) < datetime.timedelta(hours=25)
+
+
+def test_code_is_never_shown_with_font_ligatures():
+    css = open(os.path.join(os.path.dirname(papyrus.__file__), 'static', 'css', 'style.css'), encoding='utf-8').read()
+    rule = re.search(r'pre, code, kbd, samp, textarea, \.removal-url \{([^}]*)\}', css).group(1)
+    assert 'font-variant-ligatures: none' in rule and '"calt" 0' in rule        # <- must not turn into an arrow
