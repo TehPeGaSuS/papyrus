@@ -2278,3 +2278,11 @@ def test_the_paste_bar_is_below_the_files_with_add_another_file_at_the_far_end(c
     assert 'submitBtn' not in cards and 'addFileBtn' not in cards                # nothing paste-level inside the first card
     js = open(os.path.join(os.path.dirname(papyrus.__file__), 'static', 'js', 'paste_create.js'), encoding='utf-8').read()
     assert 'appendChild(pasteControls)' not in js and 'pasteControls' not in js     # and the script no longer moves it around
+
+
+def test_the_api_page_uses_the_full_width_like_the_other_pages(client):
+    html = client.get('/api').get_data(as_text=True)
+    assert '<main class="full-page view-page">' in html
+    css = open(os.path.join(os.path.dirname(papyrus.__file__), 'static', 'css', 'style.css'), encoding='utf-8').read()
+    rule = re.search(r'\.api-page \{([^}]*)\}', css).group(1)
+    assert 'max-width' not in rule and 'margin: 0 auto' not in rule              # no narrow centred column

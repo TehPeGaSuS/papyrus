@@ -2,6 +2,8 @@
 
 {% block title %}API — {{ cfg.site.name }}{% endblock %}
 
+{% block main_class %}full-page view-page{% endblock %}
+
 {% block nav_actions %}
 <a href="{{ url_for('index') }}" class="nav-btn nav-btn-save">New</a>
 {% include "_theme_controls.html" %}
