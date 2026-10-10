@@ -192,6 +192,10 @@ loginctl enable-linger "$USER"        # keep it running after you log out, and s
 systemctl --user status papyrus       # logs: journalctl --user -u papyrus
 ```
 
+Lingering is what lets a user service run while you are logged out. On Ubuntu and Debian you can switch it on for
+your own account without root (on some distributions it needs `sudo loginctl enable-linger "$USER"`). Check it with
+`loginctl show-user "$USER" -p Linger`, which prints `Linger=yes` when it is on.
+
 ## Usage
 
 `curl` works without a browser:
