@@ -2084,3 +2084,17 @@ def test_the_dashboard_has_the_view_window_and_its_script_shows_only_text(client
     assert '/static/js/admin.js' in html
     js = open(os.path.join(os.path.dirname(papyrus.__file__), 'static', 'js', 'admin.js'), encoding='utf-8').read()
     assert 'innerHTML' not in js and 'insertAdjacentHTML' not in js and 'textContent' in js     # never parsed as HTML
+
+
+def test_one_click_blocks_ask_how_long_first(client, monkeypatch):
+    monkeypatch.setattr(papyrus, '_STORE_IPS', True)
+    pid = post_as('203.0.113.9', client).get_json()['paste_id']
+    admin = admin_client()
+    html = admin.get('/admin').get_data(as_text=True)
+    assert 'data-block-form data-address="203.0.113.9"' in html and 'id="blockDialog"' in html
+    dialog = html.split('id="blockDialog"')[1].split('</dialog>')[0]
+    assert all(f'value="{key}"' in dialog for key in ('1day', '1week', '1month', 'never')) and 'name="note"' in dialog
+    assert 'Blocked 203.0.113.9/32' in block(admin, paste_id=pid, duration='1day', note='spam run')   # what the dialog posts
+    row = db().execute('SELECT note, expires_at FROM blocks').fetchone()
+    until = datetime.datetime.fromisoformat(row['expires_at'])
+    assert row['note'] == 'spam run' and datetime.timedelta(hours=23) < until - datetime.datetime.now(datetime.timezone.utc) < datetime.timedelta(hours=25)

@@ -54,7 +54,7 @@
                             <button type="submit" class="btn-delete-small">Delete paste</button>
                         </form>
                         {% if r.author_ip %}
-                        <form action="{{ url_for('admin_add_block') }}" method="POST" class="inline-form" data-confirm="Block this address from posting for {{ block_durations[default_block_duration][0] }}?">
+                        <form action="{{ url_for('admin_add_block') }}" method="POST" class="inline-form" data-block-form data-address="{{ r.author_ip }}">
                             {% if r.comment_id %}<input type="hidden" name="comment_id" value="{{ r.comment_id }}">{% else %}<input type="hidden" name="paste_id" value="{{ r.paste_id }}">{% endif %}
                             <button type="submit" class="btn-delete-small">Block author</button>
                         </form>
@@ -139,7 +139,7 @@
                             <button type="submit" class="btn-delete-small">Delete</button>
                         </form>
                         {% if paste.creator_ip %}
-                        <form action="{{ url_for('admin_add_block') }}" method="POST" class="inline-form" data-confirm="Block this address from posting for {{ block_durations[default_block_duration][0] }}?">
+                        <form action="{{ url_for('admin_add_block') }}" method="POST" class="inline-form" data-block-form data-address="{{ paste.creator_ip }}">
                             <input type="hidden" name="paste_id" value="{{ paste.id }}">
                             <button type="submit" class="btn-delete-small">Block</button>
                         </form>
@@ -151,6 +151,29 @@
         </table>
     </div>
 </div>
+
+<dialog id="blockDialog" class="view-dialog block-dialog" aria-labelledby="blockTitle">
+    <form action="{{ url_for('admin_add_block') }}" method="POST" id="blockForm">
+        <div class="view-dialog-head"><strong id="blockTitle">Block this address</strong></div>
+        <div class="view-dialog-body">
+            <p>Block <code id="blockAddress"></code> from creating pastes and commenting. <span id="blockScope"></span></p>
+            <input type="hidden" name="paste_id" id="blockPaste" value="">
+            <input type="hidden" name="comment_id" id="blockComment" value="">
+            <label class="block-field">For how long
+                <select name="duration" class="nav-select">
+                    {% for key, (label, _) in block_durations.items() %}<option value="{{ key }}"{% if key == default_block_duration %} selected{% endif %}>{{ label }}</option>{% endfor %}
+                </select>
+            </label>
+            <label class="block-field">Note (optional)
+                <input type="text" name="note" class="nav-select" maxlength="200" autocomplete="off">
+            </label>
+        </div>
+        <div class="view-dialog-foot">
+            <button type="submit" class="nav-btn nav-btn-save">Block</button>
+            <button type="button" id="blockCancel" class="nav-btn">Cancel</button>
+        </div>
+    </form>
+</dialog>
 
 <dialog id="viewDialog" class="view-dialog" aria-labelledby="viewTitle">
     <div class="view-dialog-head">

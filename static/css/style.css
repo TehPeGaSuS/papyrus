@@ -760,3 +760,6 @@ a.comment-reply:hover { text-decoration: underline; color: var(--primary); }
 .view-comment.marked { border-color: var(--danger); box-shadow: 0 0 0 2px color-mix(in srgb, var(--danger) 30%, transparent); }
 .view-comment-meta { font-size: 0.75rem; color: var(--text-muted); margin-bottom: 0.25rem; }
 .view-comment-text { white-space: pre-wrap; word-break: break-word; font-size: 0.85rem; }
+.block-dialog { width: min(32rem, 94vw); }
+.block-field { display: flex; flex-direction: column; gap: 0.25rem; margin-top: 0.75rem; font-size: 0.8rem; color: var(--text-sub); }
+.block-form + .admin-header, .block-form + .table-responsive + .admin-header { margin-top: 2.5rem; }

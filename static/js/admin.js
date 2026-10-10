@@ -18,11 +18,12 @@ document.addEventListener('DOMContentLoaded', () => {
     };
     const when = value => (value || '').replace('T', ' ').slice(0, 16);
 
-    function postButton(label, action, fields, confirmText) {
+    function postButton(label, action, fields, confirmText, blockAddress) {
         const form = el('form', 'inline-form');
         form.method = 'post';
         form.action = action;
         if (confirmText) form.dataset.confirm = confirmText;
+        if (blockAddress) { form.dataset.blockForm = ''; form.dataset.address = blockAddress; }     // opens the Block window
         Object.entries(fields).forEach(([name, value]) => {
             const input = el('input');
             input.type = 'hidden'; input.name = name; input.value = value;
@@ -69,9 +70,11 @@ document.addEventListener('DOMContentLoaded', () => {
         }
         actions.appendChild(postButton('Delete paste', '/admin/delete/' + encodeURIComponent(data.id), {},
                                        'Delete this paste and all its comments permanently?'));
-        if (data.address) {
+        const marked = data.comments.find(c => c.id === markedComment);
+        const author = marked ? marked.creator_ip : data.address;
+        if (author) {
             actions.appendChild(postButton('Block author', '/admin/blocks', markedComment ? { comment_id: markedComment } : { paste_id: data.id },
-                                           'Block this address from posting?'));
+                                           '', author));
         }
         const mark = body.querySelector('.view-comment.marked');
         if (mark) mark.scrollIntoView({ block: 'center' });
@@ -89,6 +92,27 @@ document.addEventListener('DOMContentLoaded', () => {
             document.getElementById('viewMeta').textContent = '';
         }
         if (!dialog.open) dialog.showModal();
+    }
+
+    // Block buttons ask how long first. (Without JavaScript the same forms still work: they block for the default time.)
+    const blockDialog = document.getElementById('blockDialog');
+    document.addEventListener('submit', e => {
+        const form = e.target;
+        if (!blockDialog || !form.matches || !form.matches('[data-block-form]')) return;
+        e.preventDefault();
+        const field = name => form.querySelector('input[name="' + name + '"]');
+        document.getElementById('blockPaste').value = field('paste_id') ? field('paste_id').value : '';
+        document.getElementById('blockComment').value = field('comment_id') ? field('comment_id').value : '';
+        const address = form.dataset.address || '';
+        document.getElementById('blockAddress').textContent = address;
+        document.getElementById('blockScope').textContent = address.includes(':')
+            ? 'An IPv6 visitor is blocked as the whole /64 range they control.' : '';
+        blockDialog.querySelector('input[name="note"]').value = '';
+        blockDialog.showModal();
+    });
+    if (blockDialog) {
+        document.getElementById('blockCancel').addEventListener('click', () => blockDialog.close());
+        blockDialog.addEventListener('click', e => { if (e.target === blockDialog) blockDialog.close(); });
     }
 
     document.querySelectorAll('.view-paste').forEach(btn =>

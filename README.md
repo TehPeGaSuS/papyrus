@@ -30,7 +30,7 @@ SQLite for storage, no build step.
   a paste (every file, its comments, and where it came from) in a window, as plain text, without leaving the panel
 - **Blocking addresses**, from the panel (no firewall needed): a blocked address or range can still read pastes but
   can't create them or comment. Block one by typing an address or a range (IPv4 or IPv6, for a day, a week, a month or
-  until removed), or with one click on **Block** next to a paste, a comment or a report. The panel won't let you block
+  until removed), or with **Block** next to a paste, a comment or a report (it asks how long, and for an optional note). The panel won't let you block
   your own address or an absurdly large range. An IPv6 visitor is blocked as the /64 they control
 - **Reports**: a Report button on every paste and comment, a no-JavaScript report form (reason and an
   optional note), and a queue in `/admin` with the most-reported items first. Reports exist while the admin
