@@ -33,7 +33,7 @@ import time
 from contextlib import contextmanager
 from urllib.parse import quote, urlsplit
 
-__version__ = '1.1.1'   # the one place the version lives; pyproject.toml reads it from here
+__version__ = '1.2.0'   # the one place the version lives; pyproject.toml reads it from here
 
 # ── First-run setup ───────────────────────────────────────────────────────────
 # Standard library only: this has to work before Flask is importable.
