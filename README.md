@@ -48,14 +48,16 @@ git clone https://github.com/TehPeGaSuS/papyrus.git && cd papyrus
 python3 app.py
 ```
 
-That's it. The first run creates `.venv`, installs Papyrus into it (`pip install -e .`, which also
-gives you a `.venv/bin/papyrus` command), writes `config.json` with a fresh random `secret_key`, and
-starts the server on <http://127.0.0.1:5500> using Gunicorn. Python 3.9+ is required.
+The first run only sets things up: it creates `.venv`, installs Papyrus into it (`pip install -e .`, which also
+gives you a `.venv/bin/papyrus` command) and writes `config.json` with a fresh random `secret_key`. Nothing is
+started, so you can look through `config.json` (and run `python3 app.py admin`) first. **Then start the server with
+`python3 app.py --start`**, which listens on <http://127.0.0.1:5500> using Gunicorn. (`--start` also works on the very
+first run, if you'd rather not stop in between.) Python 3.9+ is required.
 
 | Command | What it does |
 |---|---|
-| `python3 app.py` | Run in the foreground |
-| `python3 app.py -d` | Run in the background (`papyrus.pid`, `papyrus.log`) |
+| `python3 app.py --start` | Run in the foreground (plain `python3 app.py` does the same, except on the very first run, which only sets things up) |
+| `python3 app.py --start -d` | Run in the background (`papyrus.pid`, `papyrus.log`) |
 | `python3 app.py status` / `stop` / `restart` | Manage the background process |
 | `python3 app.py admin` | Set the admin password and enable `/admin` |
 | `python3 app.py --dev` | Flask development server instead of Gunicorn |
@@ -149,7 +151,7 @@ reaches the app directly can't forge them. Keep it bound to `127.0.0.1` and set 
 when serving over TLS. [`webserver/README.md`](webserver/README.md) has the details and a quick check.
 
 systemd (`/etc/systemd/system/papyrus.service`), after running `python3 app.py` once as the service
-user to set everything up:
+user to set everything up (that first run only bootstraps; the service starts it with `--start`):
 
 ```ini
 [Unit]
@@ -159,7 +161,7 @@ After=network.target
 [Service]
 User=papyrus
 WorkingDirectory=/opt/papyrus
-ExecStart=/opt/papyrus/.venv/bin/papyrus
+ExecStart=/opt/papyrus/.venv/bin/papyrus --start
 Restart=on-failure
 
 [Install]

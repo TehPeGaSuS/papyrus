@@ -104,7 +104,7 @@ def test_cmd_admin_validates_the_password(monkeypatch, project):
 
 def test_default_command_is_start():
     args = papyrus._parse_args([])
-    assert args.command == 'start' and not args.daemon and not args.dev
+    assert args.command is None and not args.start and not args.daemon and not args.dev      # None means "start"
     assert papyrus._parse_args(['-d']).daemon
     assert papyrus._parse_args(['--port', '1027', '--host', '127.0.0.1']).port == 1027
     with pytest.raises(SystemExit):
@@ -349,3 +349,74 @@ def test_a_copied_example_config_gets_a_helpful_error(tmp_path):
                          env=env, cwd=tmp_path)
     assert run.returncode != 0 and 'Traceback' not in run.stderr
     assert 'config.json' in run.stderr and 'delete config.json' in run.stderr and 'secrets.token_hex(32)' in run.stderr
+
+
+# ── the first run only bootstraps ─────────────────────────────────────────────
+
+@pytest.fixture
+def started(monkeypatch):
+    calls = []
+    monkeypatch.setattr(papyrus, 'cmd_start', lambda args: calls.append('start'))
+    monkeypatch.setattr(papyrus, 'cmd_stop', lambda: calls.append('stop'))
+    monkeypatch.delenv('SECRET_KEY', raising=False)
+    return calls
+
+
+def test_the_first_run_only_sets_things_up(monkeypatch, started, capsys):
+    monkeypatch.setattr(papyrus, '_FIRST_RUN', True)
+    papyrus.main([])
+    out = capsys.readouterr().out
+    assert started == [] and 'not running yet' in out
+    assert 'config.json' in out and 'python3 app.py admin' in out and 'python3 app.py --start' in out
+
+
+def test_later_runs_start_the_server(monkeypatch, started):
+    monkeypatch.setattr(papyrus, '_FIRST_RUN', False)
+    papyrus.main([])
+    papyrus.main(['-d'])
+    assert started == ['start', 'start']
+
+
+def test_other_commands_still_work_on_the_first_run(monkeypatch, started):
+    monkeypatch.setattr(papyrus, '_FIRST_RUN', True)
+    papyrus.main(['restart'])                        # an explicit restart is not "just bootstrap"
+    assert started == ['stop', 'start']
+
+
+def test_a_secret_key_in_the_environment_means_start_anyway(monkeypatch, started):
+    monkeypatch.setattr(papyrus, '_FIRST_RUN', True)
+    monkeypatch.setenv('SECRET_KEY', 'set-on-purpose')       # a container, say
+    papyrus.main([])
+    assert started == ['start']
+
+
+def test_installing_the_environment_marks_the_run_as_first(monkeypatch, tmp_path):
+    seen = {}
+    monkeypatch.setattr(papyrus, '_have_dependencies', lambda: False)
+    monkeypatch.setattr(papyrus, '_python_has_dependencies', lambda python: False)
+    monkeypatch.setattr(papyrus, '_VENV_DIR', str(tmp_path / '.venv'))
+    monkeypatch.setattr(papyrus, '_venv_support_available', lambda: True)
+    monkeypatch.setattr(papyrus.subprocess, 'check_call', lambda cmd: None)
+    monkeypatch.setattr('venv.create', lambda *a, **k: (tmp_path / '.venv' / 'bin').mkdir(parents=True) or (tmp_path / '.venv' / 'bin' / 'python').write_text(''))
+    monkeypatch.setattr(papyrus.os, 'execv', lambda python, argv: seen.update(first=os.environ.get('PAPYRUS_FIRST_RUN')))
+    monkeypatch.delenv('PAPYRUS_BOOTSTRAPPED', raising=False)
+    monkeypatch.delenv('PAPYRUS_FIRST_RUN', raising=False)
+    try:
+        papyrus.ensure_environment()
+    finally:
+        os.environ.pop('PAPYRUS_FIRST_RUN', None)
+        os.environ.pop('PAPYRUS_BOOTSTRAPPED', None)
+    assert seen == {'first': '1'}
+
+
+@pytest.mark.parametrize('argv', [['--start'], ['start'], ['--start', '-d']])
+def test_start_goes_ahead_even_on_the_first_run(monkeypatch, started, argv):
+    monkeypatch.setattr(papyrus, '_FIRST_RUN', True)
+    papyrus.main(argv)
+    assert started == ['start']
+
+
+def test_start_is_in_the_help():
+    args = papyrus._parse_args(['--start'])
+    assert args.start is True and args.command is None
+    assert papyrus._parse_args([]).start is False

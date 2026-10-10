@@ -98,11 +98,13 @@ def ensure_environment():
         sys.exit('Dependencies are still missing after `pip install -e .`.')
     in_venv = os.path.realpath(sys.prefix) == os.path.realpath(_VENV_DIR)
     python = sys.executable if in_venv else os.path.join(_VENV_DIR, 'bin', 'python')
+    set_up = False
     try:
         if not os.path.exists(python):
             if not _venv_support_available():
                 sys.exit(_venv_support_hint())
             print('Creating .venv ...', flush=True)
+            set_up = True
             import venv
             try:
                 venv.create(_VENV_DIR, with_pip=True)
@@ -112,21 +114,25 @@ def ensure_environment():
                 sys.exit(f'Could not create .venv ({e}).\n{_venv_support_hint()}')
         if not _python_has_dependencies(python):
             print('Installing Papyrus and its dependencies ...', flush=True)
+            set_up = True
             subprocess.check_call([python, '-m', 'pip', 'install', '--quiet', '-e', _BASE_DIR])
     except (ImportError, OSError, subprocess.CalledProcessError) as e:
         sys.exit(f'Could not set up the environment ({e}).\n'
                  f'Install it yourself: python3 -m venv .venv && .venv/bin/pip install -e .')
     os.environ['PAPYRUS_BOOTSTRAPPED'] = '1'
+    if set_up:
+        os.environ['PAPYRUS_FIRST_RUN'] = '1'      # tells the re-run that this was only the bootstrap
     os.execv(python, [python] + sys.argv)
 
 
 if __name__ == '__main__':
     ensure_environment()
 
+_FIRST_RUN = bool(os.environ.pop('PAPYRUS_FIRST_RUN', ''))   # True when this run installed the environment...
 try:
     if ensure_config():
-        print('Created config.json with a new random secret_key '
-              '(the admin panel stays off until you run `python3 app.py admin`).', file=sys.stderr)
+        _FIRST_RUN = True                                         # ...or wrote the config
+        print('Created config.json with a new random secret_key.', file=sys.stderr)
 except OSError:
     pass  # read-only checkout (e.g. a container): fall back to config.example.json + SECRET_KEY
 
@@ -1611,9 +1617,11 @@ def cmd_admin(args):
 
 def _parse_args(argv=None):
     parser = argparse.ArgumentParser(prog='app.py', description='Run and manage Papyrus.')
-    parser.add_argument('command', nargs='?', default='start',
-                        choices=['start', 'stop', 'restart', 'status', 'admin'],
-                        help='start (default), stop, restart, status, or admin (set the admin password)')
+    parser.add_argument('command', nargs='?', choices=['start', 'stop', 'restart', 'status', 'admin'],
+                        help='start (the default), stop, restart, status, or admin (set the admin password)')
+    parser.add_argument('--start', action='store_true',
+                        help='start the server (same as the start command); the very first run, which only sets '
+                             'things up, starts it too')
     parser.add_argument('--host', help='address to bind (default: server.host in config.json)')
     parser.add_argument('--port', type=int, help='port to bind (default: server.port)')
     parser.add_argument('--workers', type=int, help='worker processes (default: server.workers or CPUs+1)')
@@ -1625,8 +1633,22 @@ def _parse_args(argv=None):
     return parser.parse_args(argv)
 
 
+def _first_run_notice():
+    return ('Papyrus is set up: .venv, its dependencies and config.json (with a random secret_key).\n'
+            'The server is not running yet. Next:\n'
+            '  1. Look through config.json (site name, expiry times, port, footer, ...)\n'
+            '  2. python3 app.py admin     optional: set the admin password and enable /admin\n'
+            '  3. python3 app.py --start   start it (add -d to run in the background)')
+
 def main(argv=None):
     args = _parse_args(argv)
+    explicit = args.start or args.command == 'start'
+    args.command = args.command or 'start'
+    if args.command == 'start' and _FIRST_RUN and not explicit and not os.environ.get('SECRET_KEY'):
+        # The very first run only prepares things, so you can adjust the config before anything listens.
+        # (`start` or `--start` says "go ahead"; so does a SECRET_KEY in the environment, e.g. in a container.)
+        print(_first_run_notice())
+        return
     if args.command == 'start':
         cmd_start(args)
     elif args.command == 'stop':
