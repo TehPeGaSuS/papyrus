@@ -2,6 +2,8 @@
 
 {% block title %}Admin Dashboard - {{ cfg.site.name }}{% endblock %}
 
+{% block main_class %}page-container admin-page{% endblock %}
+
 {% block nav_actions %}
 <span class="nav-user">Logged in as Admin</span>
 <form method="post" action="{{ url_for('admin_logout') }}" style="display:inline"><button type="submit" class="nav-btn">Logout</button></form>
@@ -10,6 +12,7 @@
 
 {% block content %}
 <div class="admin-container">
+    {% for message in get_flashed_messages() %}<div class="notice" role="status">{{ message }}</div>{% endfor %}
     {% if cfg.features.get('reports', True) %}
     <div class="admin-header" id="reports">
         <h1>Reports{% if reports %} ({{ reports|length }}){% endif %}</h1>
@@ -28,6 +31,7 @@
                         <span class="badge">{% if r.comment_id %}comment{% else %}paste{% endif %}</span>
                         <a href="{{ url_for('view_paste', paste_id=r.paste_id) }}{% if r.comment_id %}#c-{{ r.comment_id }}{% endif %}" target="_blank">{{ r.title }}</a>
                         {% if r.nick %}<small>by {{ r.nick }}</small>{% endif %}
+                        {% if r.author_ip %}<small>from <code>{{ r.author_ip }}</code></small>{% endif %}
                         <div class="report-snippet">{{ r.snippet }}</div>
                         {% for note in r.notes %}<div class="report-note">&ldquo;{{ note }}&rdquo;</div>{% endfor %}
                     </td>
@@ -35,6 +39,7 @@
                     <td>{% for x in r.reasons %}{{ reasons.get(x.reason, x.reason) }}{% if x.n > 1 %} &times;{{ x.n }}{% endif %}{% if not loop.last %}, {% endif %}{% endfor %}</td>
                     <td>{{ r.last }}</td>
                     <td class="admin-actions">
+                        <button type="button" class="btn-small view-paste" data-paste="{{ r.paste_id }}"{% if r.comment_id %} data-comment="{{ r.comment_id }}"{% endif %}>View</button>
                         <form action="{{ url_for('admin_dismiss_reports') }}" method="POST" class="inline-form">
                             <input type="hidden" name="paste_id" value="{{ r.paste_id }}">
                             <input type="hidden" name="comment_id" value="{{ r.comment_id }}">
@@ -48,6 +53,12 @@
                         <form action="{{ url_for('admin_delete_paste', paste_id=r.paste_id) }}" method="POST" class="inline-form" data-confirm="Delete this paste and all its comments permanently?">
                             <button type="submit" class="btn-delete-small">Delete paste</button>
                         </form>
+                        {% if r.author_ip %}
+                        <form action="{{ url_for('admin_add_block') }}" method="POST" class="inline-form" data-confirm="Block this address from posting for {{ block_durations[default_block_duration][0] }}?">
+                            {% if r.comment_id %}<input type="hidden" name="comment_id" value="{{ r.comment_id }}">{% else %}<input type="hidden" name="paste_id" value="{{ r.paste_id }}">{% endif %}
+                            <button type="submit" class="btn-delete-small">Block author</button>
+                        </form>
+                        {% endif %}
                     </td>
                 </tr>
                 {% endfor %}
@@ -55,6 +66,42 @@
         </table>
     </div>
     {% endif %}
+    {% endif %}
+
+    <div class="admin-header" id="blocks">
+        <h1>Blocked addresses{% if blocks %} ({{ blocks|length }}){% endif %}</h1>
+        <p>A blocked address can read pastes but not create them or post comments.
+           {% if not store_ips %}Addresses are not stored with pastes (<code>pastes.store_ips</code> is off), so type them in here; copy them from the access log.{% endif %}</p>
+    </div>
+    <form action="{{ url_for('admin_add_block') }}" method="POST" class="block-form">
+        <input type="text" name="address" class="nav-select" placeholder="203.0.113.9 or 2001:db8:1:2::/64" required maxlength="64" aria-label="Address or range" autocomplete="off" spellcheck="false">
+        <input type="text" name="note" class="nav-select" placeholder="Note (optional)" maxlength="200" aria-label="Note" autocomplete="off">
+        <select name="duration" class="nav-select" aria-label="For how long">
+            {% for key, (label, _) in block_durations.items() %}<option value="{{ key }}"{% if key == default_block_duration %} selected{% endif %}>{{ label }}</option>{% endfor %}
+        </select>
+        <button type="submit" class="nav-btn nav-btn-save">Block</button>
+    </form>
+    {% if blocks %}
+    <div class="table-responsive">
+        <table class="admin-table">
+            <thead><tr><th>Address or range</th><th>Note</th><th>Added</th><th>Until</th><th>Actions</th></tr></thead>
+            <tbody>
+                {% for b in blocks %}
+                <tr>
+                    <td><code>{{ b.network }}</code></td>
+                    <td>{{ b.note }}</td>
+                    <td>{{ b.created_at[:16] }}</td>
+                    <td>{{ b.expires_at[:16]|replace('T', ' ') if b.expires_at else 'Until removed' }}</td>
+                    <td>
+                        <form action="{{ url_for('admin_delete_block', block_id=b.id) }}" method="POST" class="inline-form">
+                            <button type="submit" class="btn-small">Unblock</button>
+                        </form>
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
     {% endif %}
 
     <div class="admin-header">
@@ -72,6 +119,7 @@
                     <th>Views</th>
                     <th>Comments</th>
                     <th>Reports</th>
+                    {% if store_ips %}<th>Address</th>{% endif %}
                     <th>Actions</th>
                 </tr>
             </thead>
@@ -79,15 +127,23 @@
                 {% for paste in pastes %}
                 <tr>
                     <td><a href="{{ url_for('view_paste', paste_id=paste.id) }}" target="_blank">{{ paste.title }}</a> <small><code>{{ paste.id }}</code> &middot; {{ paste.language }}{% if paste.file_count > 1 %} &middot; {{ paste.file_count }} files{% endif %}</small></td>
-                    <td>{{ paste.created_at }}</td>
-                    <td>{{ paste.expires_at or 'Never' }}</td>
+                    <td>{{ paste.created_at[:16] }}</td>
+                    <td>{{ paste.expires_at[:16]|replace('T', ' ') if paste.expires_at else 'Never' }}</td>
                     <td>{{ paste.views }}</td>
                     <td>{{ paste.comments }}</td>
                     <td>{{ paste.reports or '' }}</td>
-                    <td>
-                        <form action="{{ url_for('admin_delete_paste', paste_id=paste.id) }}" method="POST" data-confirm="Delete this paste permanently?">
+                    {% if store_ips %}<td>{% if paste.creator_ip %}<code>{{ paste.creator_ip }}</code>{% endif %}</td>{% endif %}
+                    <td class="admin-actions">
+                        <button type="button" class="btn-small view-paste" data-paste="{{ paste.id }}">View</button>
+                        <form action="{{ url_for('admin_delete_paste', paste_id=paste.id) }}" method="POST" class="inline-form" data-confirm="Delete this paste permanently?">
                             <button type="submit" class="btn-delete-small">Delete</button>
                         </form>
+                        {% if paste.creator_ip %}
+                        <form action="{{ url_for('admin_add_block') }}" method="POST" class="inline-form" data-confirm="Block this address from posting for {{ block_durations[default_block_duration][0] }}?">
+                            <input type="hidden" name="paste_id" value="{{ paste.id }}">
+                            <button type="submit" class="btn-delete-small">Block</button>
+                        </form>
+                        {% endif %}
                     </td>
                 </tr>
                 {% endfor %}
@@ -95,4 +151,17 @@
         </table>
     </div>
 </div>
+
+<dialog id="viewDialog" class="view-dialog" aria-labelledby="viewTitle">
+    <div class="view-dialog-head">
+        <div><strong id="viewTitle"></strong> <small id="viewMeta"></small></div>
+        <button type="button" id="viewClose" class="nav-btn">Close</button>
+    </div>
+    <div id="viewBody" class="view-dialog-body"></div>
+    <div id="viewActions" class="view-dialog-foot"></div>
+</dialog>
+{% endblock %}
+
+{% block scripts %}
+<script src="{{ url_for('static', filename='js/admin.js') }}" nonce="{{ csp_nonce }}"></script>
 {% endblock %}

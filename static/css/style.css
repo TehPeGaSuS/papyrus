@@ -729,3 +729,34 @@ a.comment-reply:hover { text-decoration: underline; color: var(--primary); }
 .api-page p, .api-page ul, .api-page table, .api-page pre { margin-bottom: 0.8rem; }
 .api-code { overflow-x: auto; white-space: pre; }
 .api-page td, .api-page th { vertical-align: top; }
+
+/* ── Admin: blocked addresses ─────────────────────────────────────────────── */
+.block-form { display: flex; flex-wrap: wrap; gap: 0.5rem; margin: 0.5rem 0 1rem; }
+.block-form input[name="address"] { flex: 1 1 16rem; min-width: 12rem; }
+.block-form input[name="note"] { flex: 2 1 14rem; }
+.page-container.admin-page { max-width: 72rem; }          /* the admin tables are wide */
+
+/* ── Admin: the View window ───────────────────────────────────────────────── */
+.view-dialog {
+    margin: auto;                                  /* the global reset zeroes the dialog's own centring */
+    width: min(60rem, 94vw); max-height: 88vh; padding: 0; color: var(--text); background: var(--bg);
+    border: 1px solid var(--border); border-radius: var(--radius); box-shadow: 0 10px 40px rgba(0, 0, 0, 0.35);
+}
+.view-dialog[open] { display: flex; flex-direction: column; }
+.view-dialog::backdrop { background: rgba(0, 0, 0, 0.5); }
+.view-dialog-head, .view-dialog-foot {
+    flex-shrink: 0; display: flex; align-items: center; justify-content: space-between; gap: 0.75rem; flex-wrap: wrap;
+    padding: 0.6rem 1rem; background: var(--surface);
+}
+.view-dialog-head { border-bottom: 1px solid var(--border); }
+.view-dialog-head small { color: var(--text-muted); margin-left: 0.4rem; }
+.view-dialog-foot { justify-content: flex-start; border-top: 1px solid var(--border); }
+.view-dialog-body { flex: 1; overflow: auto; padding: 1rem; }
+.view-file { border: 1px solid var(--border); border-radius: var(--radius); margin-bottom: 1rem; overflow: hidden; }
+.view-file-head { padding: 0.3rem 0.75rem; font-size: 0.8rem; color: var(--text-sub); background: var(--surface); border-bottom: 1px solid var(--border); }
+.view-file-text { margin: 0; padding: 0.75rem; max-height: 22rem; overflow: auto; background: var(--code-bg); font-family: var(--mono); font-size: 0.8rem; line-height: 1.5; white-space: pre-wrap; word-break: break-word; }
+.view-comments-title { margin: 0.5rem 0; font-size: 1rem; }
+.view-comment { border: 1px solid var(--border); border-radius: var(--radius); padding: 0.5rem 0.75rem; margin-bottom: 0.5rem; }
+.view-comment.marked { border-color: var(--danger); box-shadow: 0 0 0 2px color-mix(in srgb, var(--danger) 30%, transparent); }
+.view-comment-meta { font-size: 0.75rem; color: var(--text-muted); margin-bottom: 0.25rem; }
+.view-comment-text { white-space: pre-wrap; word-break: break-word; font-size: 0.85rem; }

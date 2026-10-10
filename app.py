@@ -138,7 +138,7 @@ except OSError:
 
 import mistune
 import nh3
-from flask import Flask, render_template, request, jsonify, abort, Response, g, session, redirect, url_for
+from flask import Flask, render_template, request, jsonify, abort, Response, g, session, redirect, url_for, flash, get_flashed_messages
 from markupsafe import Markup
 from werkzeug.security import check_password_hash, generate_password_hash
 
@@ -353,7 +353,8 @@ def _create_tables(conn):
             expires_at          TEXT,
             views               INTEGER DEFAULT 0,
             removal_hash        TEXT NOT NULL DEFAULT '',   -- sha256 of the removal token, never the token
-            discussions_enabled INTEGER DEFAULT 0
+            discussions_enabled INTEGER DEFAULT 0,
+            creator_ip          TEXT NOT NULL DEFAULT ''    -- only when pastes.store_ips is on; goes with the paste
         )
     ''')
     conn.execute('''
@@ -375,10 +376,20 @@ def _create_tables(conn):
             parent_id   TEXT,
             nick        TEXT,
             content     TEXT NOT NULL,
-            created_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            created_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            creator_ip  TEXT NOT NULL DEFAULT ''          -- only when pastes.store_ips is on; goes with the comment
         )
     ''')
     conn.execute('CREATE INDEX IF NOT EXISTS idx_comments_paste ON comments(paste_id)')
+    conn.execute('''
+        CREATE TABLE IF NOT EXISTS blocks (
+            id          TEXT PRIMARY KEY,
+            network     TEXT NOT NULL UNIQUE,             -- an address or CIDR range, e.g. 203.0.113.9/32
+            note        TEXT NOT NULL DEFAULT '',
+            created_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            expires_at  TEXT                              -- ISO-8601 UTC, NULL = until removed
+        )
+    ''')
     conn.execute('''
         CREATE TABLE IF NOT EXISTS reports (
             id          TEXT PRIMARY KEY,
@@ -407,7 +418,14 @@ def _hash_token(token):
 def _new_removal_token():
     return secrets.token_urlsafe(24)
 
-SCHEMA_VERSION = 2   # stored in the database (PRAGMA user_version); bump it when the layout changes
+SCHEMA_VERSION = 3   # stored in the database (PRAGMA user_version); bump it when the layout changes
+
+def _migrate_2_to_3(conn):
+    """2 -> 3: the creator's address (kept only when pastes.store_ips is on) and the blocklist."""
+    for table in ('pastes', 'comments'):
+        columns = [r[1] for r in conn.execute(f'PRAGMA table_info({table})')]
+        if 'creator_ip' not in columns:
+            conn.execute(f"ALTER TABLE {table} ADD COLUMN creator_ip TEXT NOT NULL DEFAULT ''")
 
 def init_db():
     """Initialise the database. Thread-safe and idempotent: runs DDL only once per process."""
@@ -419,7 +437,10 @@ def init_db():
         try:
             with conn:
                 existing = conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='pastes'").fetchone()
-                if existing and conn.execute('PRAGMA user_version').fetchone()[0] != SCHEMA_VERSION:
+                version = conn.execute('PRAGMA user_version').fetchone()[0]
+                if existing and version == 2:
+                    _migrate_2_to_3(conn)                    # released layout: upgrade in place, keep the data
+                elif existing and version != SCHEMA_VERSION:
                     raise RuntimeError(
                         f'{DATABASE} was created by an earlier development version of Papyrus and its layout '
                         f'is out of date. There is no migration: delete or move that file and Papyrus will '
@@ -443,6 +464,7 @@ def _purge_expired():
                 _delete_paste(conn, paste_id)
             purged_ips = conn.execute(
                 'DELETE FROM rate_limits WHERE timestamp < ?', (time.time() - 3600,)).rowcount
+            conn.execute('DELETE FROM blocks WHERE expires_at < ?', (now,))
     if expired or purged_ips:
         print(f"[Cleanup] Purged {len(expired)} expired pastes and {purged_ips} rate limit entries.",
               flush=True)
@@ -512,6 +534,76 @@ def _resolve_client_ip(peer, forwarded_for):
         return str(ipaddress.ip_address(last))
     except ValueError:
         return peer
+
+# ── Blocking addresses ────────────────────────────────────────────────────────
+# The admin panel keeps a list of blocked addresses and ranges. They can no longer create pastes or post
+# comments (reading stays open). pastes.store_ips (off by default) also keeps the author's address with each
+# paste and comment, which makes "block this author" one click; without it, addresses are typed in by hand.
+
+_STORE_IPS = bool(_pastes.get('store_ips', False))
+_BLOCKED_MESSAGE = 'Your address is blocked from posting here.'
+_BLOCK_DURATIONS = {'1day': ('1 day', 86400), '1week': ('1 week', 7 * 86400),
+                    '1month': ('1 month', 30 * 86400), 'never': ('until removed', None)}
+_DEFAULT_BLOCK_DURATION = '1month'
+_MIN_BLOCK_PREFIX = {4: 16, 6: 32}      # a typo like 0.0.0.0/0 must not shut everybody out
+
+def _normalise_address(addr):
+    if addr.version == 6 and addr.ipv4_mapped:
+        return addr.ipv4_mapped
+    return addr
+
+def _is_blocked(ip):
+    try:
+        addr = _normalise_address(ipaddress.ip_address(ip))
+    except ValueError:
+        return False
+    now = datetime.datetime.now(_UTC).isoformat()
+    with _db() as conn:
+        rows = conn.execute('SELECT network FROM blocks WHERE expires_at IS NULL OR expires_at > ?', (now,)).fetchall()
+    for row in rows:
+        network = ipaddress.ip_network(row['network'])
+        if network.version == addr.version and addr in network:
+            return True
+    return False
+
+def _default_block_network(ip):
+    """One visitor: a single IPv4 address, or the /64 an IPv6 visitor controls."""
+    addr = _normalise_address(ipaddress.ip_address(ip))
+    return ipaddress.ip_network(f'{addr}/32' if addr.version == 4 else f'{addr}/64', strict=False)
+
+def _parse_block_network(text):
+    """The network typed into the admin form: (network, None) or (None, error message)."""
+    try:
+        network = ipaddress.ip_network((text or '').strip(), strict=False)
+    except ValueError:
+        return None, 'That is not an IP address or a range like 203.0.113.0/24.'
+    if network.prefixlen < _MIN_BLOCK_PREFIX[network.version]:
+        return None, (f'That range is too large to block by hand (the widest allowed is '
+                      f'/{_MIN_BLOCK_PREFIX[network.version]} for IPv{network.version}).')
+    return network, None
+
+def _add_block(conn, network, note, duration):
+    """Block `network`: (True, message), or (False, why not). Never blocks the admin's own address."""
+    mine = _normalise_address(ipaddress.ip_address(_client_ip())) if _is_ip(_client_ip()) else None
+    if mine is not None and network.version == mine.version and mine in network:
+        return False, 'That would block your own address, so it was not added.'
+    seconds = _BLOCK_DURATIONS.get(duration, _BLOCK_DURATIONS[_DEFAULT_BLOCK_DURATION])[1]
+    expires_at = (datetime.datetime.now(_UTC) + datetime.timedelta(seconds=seconds)).isoformat() if seconds else None
+    try:
+        conn.execute('INSERT INTO blocks (id, network, note, expires_at) VALUES (?, ?, ?, ?)',
+                     (secrets.token_hex(8), str(network), (note or '').strip()[:200], expires_at))
+    except sqlite3.IntegrityError:
+        conn.execute('UPDATE blocks SET note = ?, expires_at = ? WHERE network = ?',
+                     ((note or '').strip()[:200], expires_at, str(network)))
+        return True, f'{network} was already blocked; the block was renewed.'
+    return True, f'Blocked {network}.'
+
+def _is_ip(text):
+    try:
+        ipaddress.ip_address(text)
+    except ValueError:
+        return False
+    return True
 
 def _is_same_origin():
     """Verify that the request is from the same origin to prevent CSRF."""
@@ -898,8 +990,9 @@ def _clean_files(data):
         cleaned.append({'filename': name, 'language': language, 'content': content, 'named': bool(given)})
     return cleaned
 
-def _store_paste(data):
-    """Validate a new paste (one file or several) and store it: (paste_id, token, expires_at, files)."""
+def _store_paste(data, ip=''):
+    """Validate a new paste (one file or several) and store it: (paste_id, token, expires_at, files).
+    `ip` is kept with the paste only when pastes.store_ips is on."""
     files = _clean_files(data)
     raw_title = data.get('title')
     title = _clean_title(raw_title)
@@ -919,9 +1012,9 @@ def _store_paste(data):
             paste_id = generate_paste_id()
             try:
                 conn.execute(
-                    'INSERT INTO pastes (id, title, expires_at, removal_hash, discussions_enabled)'
-                    ' VALUES (?, ?, ?, ?, ?)',
-                    (paste_id, title, expires_at, _hash_token(token), int(discussions)))
+                    'INSERT INTO pastes (id, title, expires_at, removal_hash, discussions_enabled, creator_ip)'
+                    ' VALUES (?, ?, ?, ?, ?, ?)',
+                    (paste_id, title, expires_at, _hash_token(token), int(discussions), ip if _STORE_IPS else ''))
             except sqlite3.IntegrityError:
                 continue
             conn.executemany(
@@ -970,6 +1063,8 @@ def create_paste():
     def fail(message, status):
         return _text_response(message + '\n', status) if plain_text else (jsonify({'error': message}), status)
 
+    if _is_blocked(_client_ip()):
+        return fail(_BLOCKED_MESSAGE, 403)
     # 10 pastes per 10 minutes per IP address (SQLite backed for worker safety)
     if not _check_rate_limit(_client_ip(), key_prefix='create', limit=10):
         return fail('Rate limit exceeded. Please wait a few minutes.', 429)
@@ -985,7 +1080,7 @@ def create_paste():
         if not isinstance(data, dict):
             return fail('JSON body required', 400)
     try:
-        paste_id, token, expires_at, files = _store_paste(data)
+        paste_id, token, expires_at, files = _store_paste(data, _client_ip())
     except _PasteError as e:
         return fail(e.message, e.status)
     if plain_text:
@@ -1007,6 +1102,8 @@ def api_docs():
 def create_paste_curl():
     """`echo hi | curl -X POST https://host/curl -F 'raw=<-'`, plus optional filename, title, language,
     expires_in and discussions fields. Prints the paste, raw and removal URLs."""
+    if _is_blocked(_client_ip()):
+        return _text_response(_BLOCKED_MESSAGE + '\n', 403)
     if not _check_rate_limit(_client_ip(), key_prefix='create', limit=10):
         return _text_response('Rate limit exceeded. Please wait a few minutes.\n', 429)
     form = request.form
@@ -1017,7 +1114,7 @@ def create_paste_curl():
     data = {'files': files or None, 'content': None, 'title': form.get('title'),
             'expires_in': form.get('expires_in'), 'discussions': _flag(form.get('discussions'))}
     try:
-        paste_id, token, _, stored = _store_paste(data)
+        paste_id, token, _, stored = _store_paste(data, _client_ip())
     except _PasteError as e:
         return _text_response(e.message + '\n', e.status)
     return _text_response(_creation_summary(paste_id, token, stored))
@@ -1191,6 +1288,8 @@ def post_comment(paste_id):
         abort(403, 'Cross-origin request blocked.')
     if not paste['discussions_enabled']:
         abort(403, 'Discussions are not enabled for this paste.')
+    if _is_blocked(_client_ip()):
+        abort(403, _BLOCKED_MESSAGE)
     if not _check_rate_limit(_client_ip(), key_prefix='comment', window=600, limit=20):
         abort(429, 'Rate limit exceeded. Please wait a few minutes.')
 
@@ -1217,8 +1316,8 @@ def post_comment(paste_id):
             # Very deep chains are flattened: reply to the parent's parent instead.
             if _comment_depth(conn, parent_id) + 1 > _MAX_REPLY_DEPTH:
                 parent_id = parent['parent_id']
-        conn.execute('INSERT INTO comments (id, paste_id, parent_id, nick, content) VALUES (?, ?, ?, ?, ?)',
-                     (comment_id, paste_id, parent_id, nick, content))
+        conn.execute('INSERT INTO comments (id, paste_id, parent_id, nick, content, creator_ip) VALUES (?, ?, ?, ?, ?, ?)',
+                     (comment_id, paste_id, parent_id, nick, content, _client_ip() if _STORE_IPS else ''))
         conn.commit()
     return redirect(url_for('view_paste', paste_id=paste_id) + f'#c-{comment_id}', code=303)
 
@@ -1340,12 +1439,16 @@ def admin_dashboard():
             ' (SELECT language FROM files f WHERE f.paste_id = p.id ORDER BY position LIMIT 1) AS language,'
             ' (SELECT COUNT(*) FROM files f WHERE f.paste_id = p.id) AS file_count,'
             ' (SELECT COUNT(*) FROM comments c WHERE c.paste_id = p.id) AS comments,'
-            ' (SELECT COUNT(*) FROM reports r WHERE r.paste_id = p.id) AS reports'
+            ' (SELECT COUNT(*) FROM reports r WHERE r.paste_id = p.id) AS reports,'
+            ' p.creator_ip'
             ' FROM pastes p ORDER BY p.created_at DESC'
         ).fetchall()
         reports = _report_queue(conn)
-    return render_template('admin_dashboard.html', pastes=pastes, reports=reports,
-                           reasons=_REPORT_REASONS)
+        blocks = conn.execute('SELECT id, network, note, created_at, expires_at FROM blocks'
+                              ' ORDER BY created_at DESC').fetchall()
+    return render_template('admin_dashboard.html', pastes=pastes, reports=reports, blocks=blocks,
+                           reasons=_REPORT_REASONS, store_ips=_STORE_IPS, block_durations=_BLOCK_DURATIONS,
+                           default_block_duration=_DEFAULT_BLOCK_DURATION)
 
 def _report_queue(conn, limit=200):
     """Reported pastes/comments, most-reported first, with what an admin needs to judge them."""
@@ -1354,12 +1457,12 @@ def _report_queue(conn, limit=200):
         'SELECT paste_id, comment_id, COUNT(*) AS n, MAX(created_at) AS last FROM reports'
         ' GROUP BY paste_id, comment_id ORDER BY n DESC, last DESC LIMIT ?', (limit,)).fetchall()
     for g_ in groups:
-        paste = conn.execute('SELECT id, title FROM pastes WHERE id = ?', (g_['paste_id'],)).fetchone()
+        paste = conn.execute('SELECT id, title, creator_ip FROM pastes WHERE id = ?', (g_['paste_id'],)).fetchone()
         if paste is None:
             continue
         comment = None
         if g_['comment_id']:
-            comment = conn.execute('SELECT id, nick, content FROM comments WHERE id = ?',
+            comment = conn.execute('SELECT id, nick, content, creator_ip FROM comments WHERE id = ?',
                                    (g_['comment_id'],)).fetchone()
             if comment is None:
                 continue
@@ -1367,6 +1470,7 @@ def _report_queue(conn, limit=200):
         queue.append({
             'paste_id': paste['id'], 'comment_id': g_['comment_id'], 'count': g_['n'], 'last': g_['last'],
             'title': paste['title'], 'nick': comment['nick'] if comment else '',
+            'author_ip': (comment['creator_ip'] if comment else paste['creator_ip']) or '',
             'snippet': _snippet(comment['content'] if comment else _first_content(conn, paste['id'])),
             'reasons': conn.execute('SELECT reason, COUNT(*) AS n FROM reports WHERE paste_id = ? AND comment_id = ?'
                                     ' GROUP BY reason ORDER BY n DESC', where).fetchall(),
@@ -1413,6 +1517,72 @@ def admin_delete_paste(paste_id):
         _delete_paste(conn, paste_id)
         conn.commit()
     return redirect(url_for('admin_dashboard'))
+
+@app.route('/admin/paste/<string:paste_id>/data')
+def admin_paste_data(paste_id):
+    """Everything about a paste for the admin panel's "View" window. Counts no view and deletes nothing."""
+    if not is_admin():
+        abort(403)
+    if not _PASTE_ID_RE.match(paste_id):
+        abort(404)
+    with _db() as conn:
+        paste = conn.execute('SELECT id, title, created_at, expires_at, views, creator_ip FROM pastes WHERE id = ?',
+                             (paste_id,)).fetchone()
+        if paste is None or _is_expired(paste['expires_at']):
+            abort(404)
+        files = conn.execute('SELECT filename, language, content FROM files WHERE paste_id = ? ORDER BY position',
+                             (paste_id,)).fetchall()
+        comments = conn.execute('SELECT id, parent_id, nick, content, created_at, creator_ip FROM comments'
+                                ' WHERE paste_id = ? ORDER BY created_at ASC, rowid ASC', (paste_id,)).fetchall()
+    response = jsonify({
+        'id': paste['id'], 'title': paste['title'], 'created_at': paste['created_at'],
+        'expires_at': paste['expires_at'], 'views': paste['views'], 'address': paste['creator_ip'],
+        'files': [dict(f) for f in files], 'comments': [dict(c) for c in comments],
+        'url': url_for('view_paste', paste_id=paste_id),
+    })
+    response.headers['Cache-Control'] = 'no-store'
+    return response
+
+@app.route('/admin/blocks', methods=['POST'])
+def admin_add_block():
+    """Block an address typed into the form, or the stored author of a paste or comment."""
+    if not is_admin():
+        abort(403)
+    if not _is_same_origin():
+        abort(403)
+    duration = request.form.get('duration', _DEFAULT_BLOCK_DURATION)
+    note = request.form.get('note', '')
+    with _db() as conn:
+        if request.form.get('comment_id') or request.form.get('paste_id'):
+            if request.form.get('comment_id'):
+                row = conn.execute('SELECT creator_ip FROM comments WHERE id = ?', (request.form['comment_id'],)).fetchone()
+            else:
+                row = conn.execute('SELECT creator_ip FROM pastes WHERE id = ?', (request.form['paste_id'],)).fetchone()
+            if row is None or not _is_ip(row['creator_ip']):
+                flash('No address is stored for that one (turn on pastes.store_ips, or type the address in).')
+                return redirect(url_for('admin_dashboard'))
+            network, error = _default_block_network(row['creator_ip']), None
+            note = note or 'from the admin panel'
+        else:
+            network, error = _parse_block_network(request.form.get('address'))
+        if error:
+            flash(error)
+            return redirect(url_for('admin_dashboard') + '#blocks')
+        _, message = _add_block(conn, network, note, duration)
+        conn.commit()
+    flash(message)
+    return redirect(url_for('admin_dashboard') + '#blocks')
+
+@app.route('/admin/blocks/<string:block_id>/delete', methods=['POST'])
+def admin_delete_block(block_id):
+    if not is_admin():
+        abort(403)
+    if not _is_same_origin():
+        abort(403)
+    with _db() as conn:
+        conn.execute('DELETE FROM blocks WHERE id = ?', (block_id,))
+        conn.commit()
+    return redirect(url_for('admin_dashboard') + '#blocks')
 
 # ── Error handlers ────────────────────────────────────────────────────────────
 

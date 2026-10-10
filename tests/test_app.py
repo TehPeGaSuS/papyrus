@@ -1874,3 +1874,213 @@ def test_the_editor_has_an_api_button_before_the_theme_controls(client):
     top = client.get('/').get_data(as_text=True).split('</nav>')[0]
     assert top.index('id="title"') < top.index('href="/api"') < top.index('id="themeToggle"')
     assert '>API<' in top
+
+
+# ── Blocking addresses from the admin panel ───────────────────────────────────
+
+def forwarded(ip):
+    """Requests as the proxy on this machine would send them (it vouches for X-Forwarded-For)."""
+    return {'environ_overrides': {'REMOTE_ADDR': '127.0.0.1'}, 'headers': {'X-Forwarded-For': ip, **ORIGIN}}
+
+
+def admin_client():
+    c = papyrus.app.test_client()
+    assert login(c).status_code in (200, 302, 303)
+    return c
+
+
+def block(admin, **fields):
+    return admin.post('/admin/blocks', data=fields, headers=ORIGIN, follow_redirects=True).get_data(as_text=True)
+
+
+def post_as(ip, client, path='/create', **body):
+    return client.post(path, json={'content': 'x', 'expires_in': '1hour', **body}, **forwarded(ip))
+
+
+def test_a_blocked_address_cannot_create_pastes_or_comment_but_can_read(client):
+    pid = create(client, discussions=True)['paste_id']
+    admin = admin_client()
+    assert 'Blocked 203.0.113.9/32' in block(admin, address='203.0.113.9', note='spam', duration='1day')
+    r = post_as('203.0.113.9', client)
+    assert r.status_code == 403 and 'blocked' in r.get_json()['error']
+    assert post_as('203.0.113.10', client).status_code == 200                         # a neighbour is fine
+    curl = client.post('/curl', data={'raw': 'x'}, content_type='multipart/form-data', **{k: v for k, v in forwarded('203.0.113.9').items() if k != 'headers'}, headers={'X-Forwarded-For': '203.0.113.9'})
+    assert curl.status_code == 403 and 'blocked' in curl.get_data(as_text=True)
+    comment = client.post(f'/{pid}/comment', data={'content': 'hi'}, **forwarded('203.0.113.9'))
+    assert comment.status_code == 403
+    assert client.get(f'/{pid}', **forwarded('203.0.113.9')).status_code == 200      # reading stays open
+
+
+def test_ranges_ipv6_and_mapped_addresses_are_matched(client):
+    admin = admin_client()
+    block(admin, address='198.51.100.0/24', duration='never')
+    block(admin, address='2001:db8:1:2::/64', duration='never')
+    assert post_as('198.51.100.77', client).status_code == 403
+    assert post_as('::ffff:198.51.100.77', client).status_code == 403
+    assert post_as('2001:db8:1:2:aaaa:bbbb:cccc:dddd', client).status_code == 403
+    assert post_as('2001:db8:1:3::1', client).status_code == 200
+    assert post_as('198.51.101.1', client).status_code == 200
+
+
+def test_a_forged_header_cannot_get_someone_blocked_or_unblocked(client):
+    admin = admin_client()
+    block(admin, address='203.0.113.9', duration='never')
+    # Not from a trusted proxy: the header is ignored and the real peer is used.
+    r = client.post('/create', json={'content': 'x'}, environ_overrides={'REMOTE_ADDR': '192.0.2.50'},
+                    headers={'X-Forwarded-For': '203.0.113.9', **ORIGIN})
+    assert r.status_code == 200
+
+
+def test_expired_blocks_stop_applying_and_are_purged(client):
+    admin = admin_client()
+    block(admin, address='203.0.113.9', duration='1day')
+    with papyrus._db() as conn:
+        conn.execute("UPDATE blocks SET expires_at = '2000-01-01T00:00:00+00:00'")
+        conn.commit()
+    assert post_as('203.0.113.9', client).status_code == 200
+    papyrus._purge_expired()
+    assert db().execute('SELECT COUNT(*) FROM blocks').fetchone()[0] == 0
+
+
+def test_unblocking_lets_the_address_post_again(client):
+    admin = admin_client()
+    block(admin, address='203.0.113.9', duration='never')
+    block_id = db().execute('SELECT id FROM blocks').fetchone()[0]
+    assert admin.post(f'/admin/blocks/{block_id}/delete', headers=ORIGIN).status_code == 302
+    assert post_as('203.0.113.9', client).status_code == 200
+
+
+def test_the_admin_cannot_block_themselves_or_the_whole_internet(client):
+    admin = admin_client()
+    mine = block(admin, address='127.0.0.1')                                  # the test client's own address
+    assert 'would block your own address' in mine
+    assert 'too large' in block(admin, address='0.0.0.0/0')
+    assert 'too large' in block(admin, address='::/0')
+    assert 'not an IP address' in block(admin, address='banana')
+    assert db().execute('SELECT COUNT(*) FROM blocks').fetchone()[0] == 0
+
+
+def test_only_the_admin_can_change_the_blocklist(client):
+    anon = papyrus.app.test_client()
+    assert anon.post('/admin/blocks', data={'address': '203.0.113.9'}, headers=ORIGIN).status_code == 403
+    admin = admin_client()
+    assert admin.post('/admin/blocks', data={'address': '203.0.113.9'}).status_code == 403          # no Origin: CSRF
+    assert db().execute('SELECT COUNT(*) FROM blocks').fetchone()[0] == 0
+
+
+def test_addresses_are_not_stored_unless_asked_for(client):
+    pid = post_as('198.51.100.88', client).get_json()['paste_id']
+    assert db().execute('SELECT creator_ip FROM pastes WHERE id=?', (pid,)).fetchone()[0] == ''
+    html = admin_client().get('/admin').get_data(as_text=True)
+    assert '198.51.100.88' not in html and 'pastes.store_ips' in html
+
+
+def test_with_store_ips_the_admin_can_block_a_paste_or_comment_author(client, monkeypatch):
+    monkeypatch.setattr(papyrus, '_STORE_IPS', True)
+    pid = post_as('203.0.113.9', client, discussions=True).get_json()['paste_id']
+    cid_resp = client.post(f'/{pid}/comment', data={'content': 'rude'}, **forwarded('2001:db8:5:6:7:8:9:a'))
+    assert cid_resp.status_code in (302, 303)
+    admin = admin_client()
+    html = admin.get('/admin').get_data(as_text=True)
+    assert '<code>203.0.113.9</code>' in html and 'Block</button>' in html
+    assert 'Blocked 203.0.113.9/32' in block(admin, paste_id=pid)
+    cid = db().execute('SELECT id FROM comments').fetchone()[0]
+    assert 'Blocked 2001:db8:5:6::/64' in block(admin, comment_id=cid)           # an IPv6 visitor owns a /64
+    assert post_as('203.0.113.9', client).status_code == 403
+    assert post_as('2001:db8:5:6::99', client).status_code == 403
+
+
+def test_a_stored_address_goes_when_the_paste_does(client, monkeypatch):
+    monkeypatch.setattr(papyrus, '_STORE_IPS', True)
+    made = post_as('203.0.113.9', client, discussions=True).get_json()
+    client.get(f"/remove/{made['removal_token']}")
+    assert db().execute("SELECT COUNT(*) FROM pastes WHERE creator_ip != ''").fetchone()[0] == 0
+
+
+def test_the_report_queue_offers_to_block_the_author(client, monkeypatch):
+    monkeypatch.setattr(papyrus, '_STORE_IPS', True)
+    pid = post_as('203.0.113.9', client).get_json()['paste_id']
+    client.post(f'/{pid}/report', data={'reason': 'spam'}, **forwarded('198.51.100.4'))
+    html = admin_client().get('/admin').get_data(as_text=True)
+    assert 'Block author' in html and 'from <code>203.0.113.9</code>' in html
+
+
+def test_a_released_version_2_database_is_upgraded_in_place(tmp_path, monkeypatch):
+    path = str(tmp_path / 'old.db')
+    conn = sqlite3.connect(path)
+    conn.executescript('''
+        CREATE TABLE pastes (id TEXT PRIMARY KEY, title TEXT NOT NULL DEFAULT 'Untitled',
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, expires_at TEXT, views INTEGER DEFAULT 0,
+            removal_hash TEXT NOT NULL DEFAULT '', discussions_enabled INTEGER DEFAULT 0);
+        CREATE TABLE files (paste_id TEXT NOT NULL, position INTEGER NOT NULL, filename TEXT NOT NULL DEFAULT '',
+            language TEXT NOT NULL DEFAULT 'text', content TEXT NOT NULL, PRIMARY KEY (paste_id, position));
+        CREATE TABLE comments (id TEXT PRIMARY KEY, paste_id TEXT NOT NULL, parent_id TEXT, nick TEXT,
+            content TEXT NOT NULL, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP);
+        INSERT INTO pastes (id, title) VALUES ('abc123abc123', 'kept');
+        INSERT INTO files VALUES ('abc123abc123', 0, 'a.txt', 'text', 'still here');
+        INSERT INTO comments (id, paste_id, content) VALUES ('c1', 'abc123abc123', 'a comment');
+        PRAGMA user_version = 2;
+    ''')
+    conn.commit(); conn.close()
+    monkeypatch.setattr(papyrus, 'DATABASE', path)
+    monkeypatch.setattr(papyrus, '_db_initialized', False)
+    monkeypatch.setattr(papyrus, '_cleanup_running', True)
+    papyrus.init_db()
+    c = papyrus.app.test_client()
+    assert c.get('/raw/abc123abc123').get_data(as_text=True) == 'still here'
+    check = sqlite3.connect(path)
+    assert check.execute('PRAGMA user_version').fetchone()[0] == papyrus.SCHEMA_VERSION == 3
+    assert check.execute("SELECT creator_ip FROM pastes").fetchone()[0] == ''
+    assert check.execute("SELECT COUNT(*) FROM blocks").fetchone()[0] == 0
+    papyrus._db_initialized = False
+    papyrus.init_db()                                   # running it again changes nothing
+    check.close()
+
+
+def test_a_database_from_before_version_2_is_still_refused(tmp_path, monkeypatch):
+    path = str(tmp_path / 'ancient.db')
+    conn = sqlite3.connect(path)
+    conn.executescript("CREATE TABLE pastes (id TEXT PRIMARY KEY, content TEXT); PRAGMA user_version = 1;")
+    conn.commit(); conn.close()
+    monkeypatch.setattr(papyrus, 'DATABASE', path)
+    monkeypatch.setattr(papyrus, '_db_initialized', False)
+    with pytest.raises(RuntimeError, match='delete or move'):
+        papyrus.init_db()
+
+
+# ── The admin panel's View window ─────────────────────────────────────────────
+
+def test_the_admin_view_data_has_files_comments_and_changes_nothing(client, monkeypatch):
+    monkeypatch.setattr(papyrus, '_STORE_IPS', True)
+    pid = post_as('203.0.113.9', client, title='Look <b>here</b>', discussions=True,
+                  files=[{'filename': 'a.txt', 'content': '<script>alert(1)</script>'}, {'filename': 'b.py', 'content': 'x=1'}]).get_json()['paste_id']
+    client.post(f'/{pid}/comment', data={'content': '**rude**'}, **forwarded('198.51.100.4'))
+    admin = admin_client()
+    r = admin.get(f'/admin/paste/{pid}/data')
+    data = r.get_json()
+    assert r.status_code == 200 and r.headers['Cache-Control'] == 'no-store'
+    assert data['title'] == 'Look <b>here</b>' and data['address'] == '203.0.113.9' and data['url'] == f'/{pid}'
+    assert [f['filename'] for f in data['files']] == ['a.txt', 'b.py'] and data['files'][0]['content'] == '<script>alert(1)</script>'
+    assert data['comments'][0]['content'] == '**rude**' and data['comments'][0]['creator_ip'] == '198.51.100.4'
+    assert db().execute('SELECT views FROM pastes WHERE id=?', (pid,)).fetchone()[0] == 0      # looking is not a view
+
+
+def test_only_the_admin_can_fetch_view_data_and_gone_pastes_are_404(client):
+    pid = create(client)['paste_id']
+    assert papyrus.app.test_client().get(f'/admin/paste/{pid}/data').status_code == 403
+    admin = admin_client()
+    assert admin.get('/admin/paste/000000000000/data').status_code == 404
+    assert admin.get('/admin/paste/not-an-id/data').status_code == 404
+    with papyrus._db() as conn:
+        conn.execute("UPDATE pastes SET expires_at = '2000-01-01T00:00:00+00:00'"); conn.commit()
+    assert admin.get(f'/admin/paste/{pid}/data').status_code == 404
+    assert db().execute('SELECT COUNT(*) FROM pastes').fetchone()[0] == 1            # looking did not delete it
+
+
+def test_the_dashboard_has_the_view_window_and_its_script_shows_only_text(client):
+    pid = create(client)['paste_id']
+    html = admin_client().get('/admin').get_data(as_text=True)
+    assert 'class="btn-small view-paste" data-paste="%s"' % pid in html and '<dialog id="viewDialog"' in html
+    assert '/static/js/admin.js' in html
+    js = open(os.path.join(os.path.dirname(papyrus.__file__), 'static', 'js', 'admin.js'), encoding='utf-8').read()
+    assert 'innerHTML' not in js and 'insertAdjacentHTML' not in js and 'textContent' in js     # never parsed as HTML

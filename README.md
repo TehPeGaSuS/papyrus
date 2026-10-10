@@ -26,7 +26,12 @@ SQLite for storage, no build step.
 - **Threaded discussions**: optional per-paste comments and nested replies, each in its own box,
   written in Markdown (code fences, tables, links) with a Write/Preview tab. Rendered and sanitised
   on the server
-- **Admin panel** at `/admin` to list and delete pastes and comments, and to work through reports
+- **Admin panel** at `/admin` to list and delete pastes and comments, and to work through reports. **View** opens
+  a paste (every file, its comments, and where it came from) in a window, as plain text, without leaving the panel
+- **Blocking addresses**, from the panel (no firewall needed): a blocked address or range can still read pastes but
+  can't create them or comment. Block one by typing an address or a range (IPv4 or IPv6, for a day, a week, a month or
+  until removed), or with one click on **Block** next to a paste, a comment or a report. The panel won't let you block
+  your own address or an absurdly large range. An IPv6 visitor is blocked as the /64 they control
 - **Reports**: a Report button on every paste and comment, a no-JavaScript report form (reason and an
   optional note), and a queue in `/admin` with the most-reported items first. Reports exist while the admin
   panel is enabled (`python3 app.py admin`); `features.reports` switches them off
@@ -77,6 +82,10 @@ no `config.json`. Restart after changing it.
 - `server.secret_key`: signs the admin session. The `SECRET_KEY` environment variable overrides it
 - `pastes.expiries`: the expiry choices, see below. `pastes.default_expiry` names the one selected by default
 - `pastes.*`: also the size limit (for the whole paste), `max_files`, the default language and `recent_limit`
+- `pastes.store_ips`: keep the author's address with each paste and comment (default `false`). Needed for the
+  one-click **Block** buttons and to see addresses in the panel; the address is deleted together with the paste or
+  comment. Leave it off and nothing but a keyed hash (for reports) ever records who posted; you can still block by
+  typing in an address, for example one copied from the access log
 - `site.footer`: a line of text at the bottom of every page (the shipped one says the site claims no ownership of,
   and has no liability for, what people paste). `site.notice`: an optional banner under the top bar, off by default.
   Both are inline Markdown, so `[links](https://example.org)` and `**emphasis**` work and raw HTML is escaped; leave
@@ -244,7 +253,8 @@ link is also shown once after saving, for removing the paste from another device
 - `GET|POST /<id>/report` (optional `?comment=<comment id>`): report a paste or a comment
 - Admin: `GET|POST /admin/login`, `POST /admin/logout`, `GET /admin`, `POST /admin/delete/<id>`,
   `POST /admin/comments/<comment id>/delete` (replies are kept and move up a level),
-  `POST /admin/reports/dismiss`
+  `POST /admin/reports/dismiss`, `GET /admin/paste/<id>/data` (the View window), `POST /admin/blocks`,
+  `POST /admin/blocks/<id>/delete`
 
 ## Database
 
@@ -268,7 +278,13 @@ CREATE TABLE files (
 CREATE TABLE comments (
     id TEXT PRIMARY KEY, paste_id TEXT NOT NULL, parent_id TEXT, nick TEXT,
     content TEXT NOT NULL,         -- Markdown source
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    creator_ip TEXT NOT NULL DEFAULT ''    -- only with pastes.store_ips
+);
+CREATE TABLE blocks (
+    id TEXT PRIMARY KEY, network TEXT NOT NULL UNIQUE,   -- an address or a CIDR range
+    note TEXT NOT NULL DEFAULT '', created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    expires_at TEXT                                      -- NULL = until removed
 );
 CREATE TABLE reports (
     id TEXT PRIMARY KEY, paste_id TEXT NOT NULL,
