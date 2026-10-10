@@ -936,8 +936,8 @@ def _paste_for_removal(conn, token):
 
 @app.route('/remove/<string:token>', methods=['GET', 'POST'])
 def remove_paste(token):
-    """The removal link: GET asks for confirmation (so link previews can't delete anything),
-    POST removes the paste. The token is the only credential."""
+    """The removal link: opening it removes the paste at once, as in PrivateBin and pinnwand (POST works too,
+    for scripts). The token is the only credential. HEAD only checks: probing bots must not delete."""
     if _is_rate_limited(_client_ip(), 'remove', 600, 30):      # only misses count: tokens can't be guessed
         abort(429, 'Too many attempts. Please wait a few minutes.')
     with _db() as conn:
@@ -949,11 +949,11 @@ def remove_paste(token):
         if paste is None:
             _record_hit(_client_ip(), 'remove')
             abort(404)
-        if request.method == 'POST':
-            _delete_paste(conn, paste['id'])
-            conn.commit()
-            return render_template('removed.html', title=paste['title'])
-    return render_template('remove.html', paste=paste, snippet=_snippet(paste['content'], 300))
+        if request.method == 'HEAD':
+            return '', 200
+        _delete_paste(conn, paste['id'])
+        conn.commit()
+        return render_template('removed.html', title=paste['title'])
 
 @app.route('/<string:paste_id>')
 def view_paste(paste_id):

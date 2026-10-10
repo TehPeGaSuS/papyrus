@@ -1006,17 +1006,31 @@ def test_created_notice_with_the_removal_link_is_for_the_owner_only(client):
     assert 'Paste created.' not in client.get(f'/{pid}').get_data(as_text=True)
 
 
-def test_opening_the_removal_link_only_asks(client):
+def test_opening_the_removal_link_removes_the_paste_at_once(client):
     made = create(client, title='My <b>paste</b>', content='some   text\nhere')
-    token = made['removal_token']
-    page = fresh_client().get(f'/remove/{token}')                  # a link previewer, or a curious click
+    pid, token = made['paste_id'], made['removal_token']
+    page = fresh_client().get(f'/remove/{token}')                  # no cookie, no confirmation step
     html = page.get_data(as_text=True)
-    assert page.status_code == 200 and 'Remove this paste?' in html
-    assert 'My &lt;b&gt;paste&lt;/b&gt;' in html and 'some text here' in html
-    assert '<form method="post"' in html and 'Remove now' in html
-    assert client.get(f"/{made['paste_id']}").status_code == 200   # nothing was deleted
-    assert client.head(f'/remove/{token}').status_code == 200
-    assert client.get(f"/{made['paste_id']}").status_code == 200
+    assert page.status_code == 200 and 'Paste removed' in html
+    assert 'My &lt;b&gt;paste&lt;/b&gt;' in html and 'some   text' not in html      # the title, escaped; no content shown
+    assert 'Remove this paste?' not in html and '<form' not in html.split('</nav>')[1].split('</main>')[0]
+    assert client.get(f'/{pid}').status_code == 404
+    assert client.get(f'/remove/{token}').status_code == 404       # gone for good
+
+
+def test_head_requests_never_delete(client):
+    made = create(client)
+    token = made['removal_token']
+    assert client.head(f'/remove/{token}').status_code == 200      # a bot probing the link
+    assert client.get(f"/{made['paste_id']}").status_code == 200   # ...removed nothing
+    assert client.head('/remove/not-a-token').status_code == 404
+
+
+def test_the_remove_now_button_removes_without_asking(client):
+    made = create(client)
+    link = re.search(r'href="(/remove/[^"]+)"[^>]*>Remove now', client.get(f"/{made['paste_id']}").get_data(as_text=True)).group(1)
+    assert 'Paste removed' in client.get(link).get_data(as_text=True)
+    assert client.get(f"/{made['paste_id']}").status_code == 404
 
 
 def test_removing_through_the_link_needs_no_cookie_and_cleans_up(client):
@@ -1569,22 +1583,22 @@ def test_footer_text_and_notice_can_be_switched_off_but_the_source_link_stays(cl
     html = client.get('/').get_data(as_text=True)
     footer = re.search(r'<footer class="site-footer">.*?</footer>', html, re.S).group(0)
     assert 'class="site-notice"' not in html
-    assert footer == ('<footer class="site-footer">Source: <a href="https://github.com/TehPeGaSuS/papyrus" '
-                      'rel="noopener">https://github.com/TehPeGaSuS/papyrus</a> '
-                      f'<span class="footer-sep" aria-hidden="true">&middot;</span> '
-                      f'<span class="footer-version">Papyrus {papyrus.__version__}</span></footer>')
+    assert footer == ('<footer class="site-footer">'
+                      f'<span class="footer-version">Powered by Papyrus {papyrus.__version__}</span> '
+                      '<span class="footer-sep" aria-hidden="true">&middot;</span> '
+                      '<a href="https://github.com/TehPeGaSuS/papyrus" rel="noopener">Source</a></footer>')
 
 
 def test_the_source_link_follows_the_configured_footer_text(client):
     footer = re.search(r'<footer class="site-footer">.*?</footer>', client.get('/').get_data(as_text=True), re.S).group(0)
-    assert footer.index('assumes no liability') < footer.index('&middot;') < footer.index('Source:')
+    assert footer.index('assumes no liability') < footer.index('&middot;') < footer.index('Powered by Papyrus') < footer.index('>Source</a>')
     assert 'href="https://github.com/TehPeGaSuS/papyrus"' in footer
 
 
 def test_the_source_link_is_on_every_page(client):
     pid = create(client)['paste_id']
     for path in ('/', f'/{pid}', '/admin/login', '/nothing-here-0000'):
-        assert 'Source: <a href="https://github.com/TehPeGaSuS/papyrus"' in client.get(path).get_data(as_text=True), path
+        assert '<a href="https://github.com/TehPeGaSuS/papyrus" rel="noopener">Source</a>' in client.get(path).get_data(as_text=True), path
 
 
 def test_api_config_no_longer_has_the_unused_footer_text(client):
@@ -1723,12 +1737,12 @@ def test_the_version_is_in_the_footer_of_every_page(client):
     pid = create(client)['paste_id']
     for path in ('/', f'/{pid}', '/admin/login', '/nothing-here-0000'):
         footer = re.search(r'<footer class="site-footer">.*?</footer>', client.get(path).get_data(as_text=True), re.S).group(0)
-        assert footer.index('Source:') < footer.index('class="footer-version">Papyrus 1.0.0</span>'), path
+        assert footer.index('class="footer-version">Powered by Papyrus 1.0.0</span>') < footer.index('>Source</a>'), path
 
 
 def test_the_version_stays_when_the_footer_text_is_switched_off(client, monkeypatch):
     monkeypatch.setattr(papyrus, '_SITE_FOOTER', site_text(monkeypatch, 'footer', ''))
-    assert 'Papyrus 1.0.0' in client.get('/').get_data(as_text=True)
+    assert 'Powered by Papyrus 1.0.0' in client.get('/').get_data(as_text=True)
 
 
 def test_there_is_one_version_and_packaging_reads_it_from_app_py():
