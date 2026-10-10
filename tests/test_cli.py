@@ -334,3 +334,18 @@ def test_stop_gives_up_with_a_message_if_nothing_works(monkeypatch, tmp_path):
     with pytest.raises(SystemExit) as exc:
         papyrus.cmd_stop()
     assert 'kill -9 4242' in str(exc.value) and sent == [signal.SIGTERM, signal.SIGQUIT]
+
+
+def test_a_copied_example_config_gets_a_helpful_error(tmp_path):
+    """cp config.example.json config.json keeps the placeholder key: say which file, and how to fix it."""
+    import shutil, subprocess
+    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    for name in ('app.py', 'config.example.json', 'pyproject.toml'):
+        shutil.copy(os.path.join(root, name), tmp_path / name)
+    shutil.copy(tmp_path / 'config.example.json', tmp_path / 'config.json')
+    env = {k: v for k, v in os.environ.items() if k != 'SECRET_KEY'}
+    env['PAPYRUS_BOOTSTRAPPED'] = '1'
+    run = subprocess.run([sys.executable, '-I', str(tmp_path / 'app.py'), '--version'], capture_output=True, text=True,
+                         env=env, cwd=tmp_path)
+    assert run.returncode != 0 and 'Traceback' not in run.stderr
+    assert 'config.json' in run.stderr and 'delete config.json' in run.stderr and 'secrets.token_hex(32)' in run.stderr

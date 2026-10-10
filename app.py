@@ -171,10 +171,15 @@ app = Flask(__name__)
 _secret_key = os.environ.get('SECRET_KEY') or _server.get('secret_key', '')
 _DEFAULT_KEYS = {'', 'change-me', 'change-this-to-a-long-random-secret'}
 if _secret_key in _DEFAULT_KEYS:
-    raise RuntimeError(
-        'SECRET_KEY is not set or is still the default placeholder. '
-        'Set a long random value in the SECRET_KEY environment variable '
-        'or in config.json before starting the server.'
+    _where = os.path.basename(_CONFIG_PATH)
+    sys.exit(
+        f'Papyrus will not start: server.secret_key in {_where} is empty or still the placeholder, and the '
+        f'SECRET_KEY environment variable is not set.\n'
+        f'The simplest fix: delete config.json and start again. Papyrus then writes a new one with a random key '
+        f'(copying config.example.json by hand keeps the placeholder).\n'
+        f'Or put your own long random value in config.json, for example the output of\n'
+        f'    python3 -c "import secrets; print(secrets.token_hex(32))"\n'
+        f'or pass it in the SECRET_KEY environment variable.'
     )
 app.config['SECRET_KEY'] = _secret_key
 
