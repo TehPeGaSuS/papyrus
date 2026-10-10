@@ -11,8 +11,11 @@ SQLite for storage, no build step.
   (`![alt](url)`) are shown as plain links, never embedded. The only images the site serves are its
   own logo and icons
 - **Paste and share**: short links (`/<id>`), raw text at `/raw/<id>`, `curl` uploads, download as a file
-- **Load a text file**: drop one on the editor (or use "open a file") and its contents load straight in, with the
-  filename filled in. It stays in your browser until you save; only UTF-8 text up to the size limit is accepted
+- **Several files per paste**: "Add file" gives each file its own card (filename, language, indent options), like
+  GitHub Gists; up to 10 by default (`pastes.max_files`). Each file has its own raw link and Markdown preview
+- **Load text files**: drop them on the editor (or use "open files") and the contents load straight in, with the
+  filenames filled in (one file goes in the current card, several get a card each). It stays in your browser until
+  you save; only UTF-8 text up to the size limit is accepted
 - **Gist-style editor**: description, filename (the extension picks the syntax highlighting), indent mode
   (spaces or tabs), indent size (2, 4, 8), no wrap (the default, like GitHub) or soft wrap, Tab/Shift+Tab indenting and auto-indent
 - **Markdown preview**: Markdown pastes (up to 256 KB) get a Source | Preview switch; `?view=preview` links straight to
@@ -71,7 +74,7 @@ no `config.json`. Restart after changing it.
 - `server.use_https`: mark the session cookie `Secure`
 - `server.secret_key`: signs the admin session. The `SECRET_KEY` environment variable overrides it
 - `pastes.expiries`: the expiry choices, see below. `pastes.default_expiry` names the one selected by default
-- `pastes.*`: also the size limit, the default language and `recent_limit`
+- `pastes.*`: also the size limit (for the whole paste), `max_files`, the default language and `recent_limit`
 - `site.footer`: a line of text at the bottom of every page (the shipped one says the site claims no ownership of,
   and has no liability for, what people paste). `site.notice`: an optional banner under the top bar, off by default.
   Both are inline Markdown, so `[links](https://example.org)` and `**emphasis**` work and raw HTML is escaped; leave
@@ -173,7 +176,8 @@ $ curl --data-binary @file.py 'https://host/create?filename=file.py&title=notes'
 ```
 
 Optional form fields for `/curl`: `filename` (picks the syntax highlighting), `title` (the description),
-`language`, `expires_in` and `discussions`.
+`language`, `expires_in` and `discussions`. Repeat `-F raw=… -F filename=…` for a paste with several files (the
+reply then has one `Raw URL (<filename>)` line per file).
 
 **Removing a paste.** The Removal URL is the only thing that removes it, so keep it. Opening it removes
 the paste at once (as in PrivateBin and pinnwand), so don't post it where a link-previewing bot would read it; from a
@@ -187,10 +191,12 @@ link is also shown once after saving, for removing the paste from another device
 - `GET /`: create-paste page
 - `POST /curl`: create a paste from form fields (`raw`, optional `filename`, `title`, `language`, `expires_in`,
   `discussions`); prints the paste, raw and removal URLs as plain text
-- `POST /create`: the same from JSON (`content`, optional `title` (the description), `filename`, `language`
+- `POST /create`: the same from JSON (`content`, or `files`: a list of `{content, filename, language}` for several
+  files; optional `title` (the description), `filename`, `language`
   (`auto` or omitted: detected from the filename), `expires_in`, `discussions`; answers with `paste_id`, `url`,
   `removal_token`, `removal_url` and sets the owner cookie) or from a plain-text body (prints like `/curl`)
-- `GET /<id>`: view a paste (`?view=preview` for a rendered Markdown paste); `GET /raw/<id>`: its content as `text/plain`
+- `GET /<id>`: view a paste (`?view=preview` for a rendered Markdown paste); `GET /raw/<id>`: its (first) file as `text/plain`; `GET /raw/<id>/<filename>`: any file of it.
+  `?f=2&L=5-12` highlights lines of the second file
 - `POST /<id>/comment`: add a comment (form fields `content`, optional `nick`, optional `parent`, the
   id of the comment being answered; threads deeper than 6 levels are flattened)
 - `POST /api/preview`: render Markdown for the preview tab
@@ -210,13 +216,16 @@ SQLite, created automatically, stored as plain text (there is no end-to-end encr
 CREATE TABLE pastes (
     id TEXT PRIMARY KEY,
     title TEXT NOT NULL DEFAULT 'Untitled',
-    content TEXT NOT NULL,
-    language TEXT NOT NULL DEFAULT 'text',
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     expires_at TEXT,               -- ISO-8601 UTC, NULL = never
     views INTEGER DEFAULT 0,
     removal_hash TEXT NOT NULL DEFAULT '',   -- sha256 of the removal token, never the token itself
     discussions_enabled INTEGER DEFAULT 0
+);
+CREATE TABLE files (
+    paste_id TEXT NOT NULL, position INTEGER NOT NULL, filename TEXT NOT NULL DEFAULT '',
+    language TEXT NOT NULL DEFAULT 'text', content TEXT NOT NULL,
+    PRIMARY KEY (paste_id, position)
 );
 CREATE TABLE comments (
     id TEXT PRIMARY KEY, paste_id TEXT NOT NULL, parent_id TEXT, nick TEXT,

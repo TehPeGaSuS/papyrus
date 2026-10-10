@@ -195,8 +195,8 @@ body {
     line-height: 1.6;
 }
 /* Word wrap toggle */
-.view-full.wrap-lines pre,
-.view-full.wrap-lines code {
+.wrap-lines .view-full pre,
+.wrap-lines .view-full code {
     white-space: pre-wrap;
     word-break: break-all;
 }
@@ -624,6 +624,7 @@ a.comment-reply:hover { text-decoration: underline; color: var(--primary); }
 .editor-bar-spacer { flex: 1 1 0; }
 .bar-field { display: inline-flex; align-items: center; gap: 0.4rem; font-size: 0.75rem; color: var(--text-sub); white-space: nowrap; }
 .full-editor.no-wrap { white-space: pre; overflow-x: auto; }
+[hidden] { display: none !important; }
 .editor-hint { flex-shrink: 0; padding: 0.25rem 1rem; font-size: 0.7rem; color: var(--text-muted); background: var(--surface); border-top: 1px solid var(--border); }
 
 /* ── View page: file header ───────────────────────────────────────────── */
@@ -642,7 +643,7 @@ a.comment-reply:hover { text-decoration: underline; color: var(--primary); }
     padding: 0.05rem 0.35rem; border: 1px solid var(--border); border-radius: var(--radius);
     background: var(--bg); color: var(--text-sub); font-family: var(--mono); font-size: 0.68rem;
 }
-.full-editor.tab-moves-focus { box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--primary) 45%, transparent); }
+.tab-moves-focus .full-editor, .full-editor.tab-moves-focus { box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--primary) 45%, transparent); }
 
 /* The paste's name and stats sit in the top bar: Logo | filename (bash · 8 lines · 201 B) | controls */
 .paste-info {
@@ -677,8 +678,8 @@ a.comment-reply:hover { text-decoration: underline; color: var(--primary); }
 .switch-btn:hover { background: var(--surface); color: var(--text); }
 .switch-btn.active { background: var(--primary); color: var(--on-primary); }
 .paste-preview { display: none; }
-body.previewing .paste-preview { display: block; }
-body.previewing .view-full, body.previewing .nav-label { display: none; }
+.file-card.previewing .paste-preview { display: block; }
+.file-card.previewing .view-full, body.previewing .nav-label { display: none; }
 .paste-preview { max-width: 52rem; width: 100%; margin: 0 auto; padding: 1.5rem 1.25rem 2rem; font-size: 0.95rem; line-height: 1.7; }
 .paste-preview h1, .paste-preview h2 { padding-bottom: 0.3rem; border-bottom: 1px solid var(--border); }
 .paste-preview h1 { font-size: 1.7rem; margin: 1.4rem 0 0.8rem; }
@@ -689,7 +690,33 @@ body.previewing .view-full, body.previewing .nav-label { display: none; }
 .paste-preview > :first-child { margin-top: 0; }
 
 /* ── Loading a text file into the editor ──────────────────────────────────── */
-.full-editor.drop-target { outline: 2px dashed var(--primary); outline-offset: -8px; background: color-mix(in srgb, var(--primary) 5%, var(--bg)); }
+.file-editors.drop-target .full-editor { outline: 2px dashed var(--primary); outline-offset: -8px; background: color-mix(in srgb, var(--primary) 5%, var(--bg)); }
 .link-btn { background: none; border: none; padding: 0; font: inherit; color: var(--primary); text-decoration: underline; cursor: pointer; }
 .file-note { color: var(--text-sub); }
 .file-note.error { color: var(--danger); font-weight: 600; }
+
+/* ── Several files in one paste: stacked cards, each with its own header ──────── */
+.file-list.multi { padding: 1rem; display: flex; flex-direction: column; gap: 1rem; }
+.file-list.multi .file-card { border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; }
+.file-list.multi .view-full { min-height: 0; overflow-x: auto; }
+.file-head {
+    display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 0.5rem 1rem;
+    padding: 0.35rem 0.75rem; background: var(--surface); border-bottom: 1px solid var(--border);
+}
+.file-head-info { display: flex; align-items: baseline; gap: 0.6rem; min-width: 0; }
+.file-head-actions { display: flex; align-items: center; gap: 0.4rem; flex-wrap: wrap; }
+.file-list.multi .paste-preview { max-width: none; margin: 0; }
+
+/* ── Create page: one card per file ───────────────────────────────────────── */
+.file-editors { flex: 1; display: flex; flex-direction: column; min-height: 0; }
+.file-editor { flex: 1; display: flex; flex-direction: column; min-height: 0; }
+.file-editors.multi { flex: 1 1 auto; overflow-y: auto; gap: 1rem; padding: 1rem; }
+.file-editors.multi .file-editor { flex: none; border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; }
+.file-editors.multi .editor-bar { border-top: none; }
+.file-editors.multi .full-editor { flex: none; height: 16rem; }
+/* The paste-level controls (Add file, Expires, Allow comments, Clear, Save) live in the first file's bar while there is
+   one file, and in a bar of their own below the cards once there are several. */
+.paste-controls { display: contents; }
+.paste-controls .bar-field-first { margin-left: auto; }
+.paste-bar > .paste-controls { display: contents; }
+.paste-bar { justify-content: flex-start; }

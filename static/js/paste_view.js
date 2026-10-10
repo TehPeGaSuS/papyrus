@@ -2,6 +2,7 @@
 /**
  * paste_view.js — behaviour for the server-rendered paste view page.
  * Depends on: app.js (copyToClipboard), Prism.
+ * A paste is one or more .file-card sections; each has its own Raw / Copy / Download / Source|Preview controls.
  */
 
 document.addEventListener('DOMContentLoaded', () => {
@@ -30,66 +31,61 @@ function pasteMeta() {
     return document.getElementById('viewFull').dataset;
 }
 
-async function fetchRawContent() {
-    const resp = await fetch('/raw/' + pasteMeta().pasteId);
+function fileCards() {
+    return Array.from(document.querySelectorAll('.file-card'));
+}
+
+async function fetchRawContent(card) {
+    const resp = await fetch(card.dataset.raw);
     if (!resp.ok) throw new Error('HTTP ' + resp.status);
     return resp.text();
 }
 
+// The buttons sit in the top bar (one file) or in each card's header (several); data-file says which card.
+function cardOf(button) {
+    return document.querySelector('.file-card[data-file="' + button.dataset.file + '"]');
+}
+
 function initPasteActions() {
-    const copyBtn = document.getElementById('copyBtn');
-    const downloadBtn = document.getElementById('downloadBtn');
-    if (copyBtn)     copyBtn.addEventListener('click', copyPaste);
-    if (downloadBtn) downloadBtn.addEventListener('click', downloadPaste);
+    document.querySelectorAll('[data-role="copy"]').forEach(btn => btn.addEventListener('click', () => copyFile(btn)));
+    document.querySelectorAll('[data-role="download"]').forEach(btn => btn.addEventListener('click', () => downloadFile(btn)));
 }
 
 function initLineNumbers() {
     const toggle = document.getElementById('lineNoToggle');
-    const viewPre = document.getElementById('viewPre');
-    if (!toggle || !viewPre) return;
+    if (!toggle) return;
 
     // Load preference from localStorage (default to checked)
     const stored = localStorage.getItem('show_line_numbers');
-    const isEnabled = (stored === null) ? true : (stored === 'true');
-    toggle.checked = isEnabled;
+    toggle.checked = (stored === null) ? true : (stored === 'true');
 
     const updateLines = () => {
-        const checked = toggle.checked;
-        if (checked) {
-            viewPre.classList.add('line-numbers');
-        } else {
-            viewPre.classList.remove('line-numbers');
-            const existing = viewPre.querySelector('.line-numbers-rows');
-            if (existing) existing.remove();
-        }
-        localStorage.setItem('show_line_numbers', checked);
-
-        // Always re-highlight so Prism's line-numbers plugin runs (works for plain text too)
-        const code = document.getElementById('codeBlock');
-        if (code) {
-            Prism.highlightElement(code);
-        }
+        fileCards().forEach(card => {
+            const pre = card.querySelector('.file-pre');
+            pre.classList.toggle('line-numbers', toggle.checked);
+            if (!toggle.checked) pre.querySelector('.line-numbers-rows')?.remove();
+            // Always re-highlight so Prism's line-numbers plugin runs (works for plain text too)
+            Prism.highlightElement(card.querySelector('.file-code'));
+        });
+        localStorage.setItem('show_line_numbers', toggle.checked);
     };
 
     toggle.addEventListener('change', updateLines);
-
-    // Apply initial state (calls Prism so line numbers render without needing a toggle)
-    updateLines();
+    updateLines();   // initial state: renders line numbers without needing a toggle
 }
 
-async function copyPaste() {
-    const btn = document.getElementById('copyBtn');
+async function copyFile(btn) {
     let ok = false;
-    try { ok = await copyToClipboard(await fetchRawContent()); } catch (e) { /* reported below */ }
-    if (btn) {
-        const t = btn.textContent;
-        btn.textContent = ok ? 'Copied!' : 'Failed';
-        setTimeout(() => btn.textContent = t, 1500);
-    }
+    try { ok = await copyToClipboard(await fetchRawContent(cardOf(btn))); } catch (e) { /* reported below */ }
+    const t = btn.textContent;
+    btn.textContent = ok ? 'Copied!' : 'Failed';
+    setTimeout(() => btn.textContent = t, 1500);
 }
 
-async function downloadPaste() {
-    const { title = 'untitled', language = 'text', filename = '' } = pasteMeta();
+async function downloadFile(btn) {
+    const card = cardOf(btn);
+    const { title = 'untitled' } = pasteMeta();
+    const { language = 'text', filename = '' } = card.dataset;
     const extMap = {
         javascript: '.js',  typescript: '.ts',  python:  '.py',   java:       '.java',
         c:          '.c',   cpp:        '.cpp',  csharp:  '.cs',   html:       '.html',
@@ -100,7 +96,7 @@ async function downloadPaste() {
         docker:     '',     nginx:      '.conf', toml:    '.toml', ini:        '.ini',
     };
     let content;
-    try { content = await fetchRawContent(); } catch (e) { alert('Download failed.'); return; }
+    try { content = await fetchRawContent(card); } catch (e) { alert('Download failed.'); return; }
     const safe = s => s.replace(/[^a-z0-9._\-]/gi, '_');
     const downloadName = filename ? safe(filename) : safe(title) + (extMap[language] ?? '.txt');
     const blob = new Blob([content], { type: 'text/plain' });
@@ -127,49 +123,48 @@ function initRemovalLink() {
 }
 
 // ── Line highlight / linking ──────────────────────────────────────────────────
+// ?L=5 or ?L=5-12 marks lines of one file; ?f=2 says which one (the first when absent).
 
+let _hlFile    = null; // the card whose lines are highlighted
 let _hlAnchor  = null; // anchor line for shift-click range
 let _hlStart   = null;
 let _hlEnd     = null;
 let _hlScrolled = false;
 
 function initLineHighlight() {
-    // Parse ?L=5 or ?L=5-12 from the URL
-    const lParam = new URLSearchParams(window.location.search).get('L');
-    if (lParam) {
-        const m = lParam.match(/^(\d+)(?:-(\d+))?$/);
-        if (m) {
-            _hlStart  = parseInt(m[1], 10);
-            _hlEnd    = m[2] ? parseInt(m[2], 10) : _hlStart;
-            _hlAnchor = _hlStart;
-        }
+    const params = new URLSearchParams(window.location.search);
+    const m = (params.get('L') || '').match(/^(\d+)(?:-(\d+))?$/);
+    if (m) {
+        _hlFile   = fileCards()[Math.max(0, parseInt(pasteMeta().highlightFile, 10) - 1)] || null;
+        _hlStart  = parseInt(m[1], 10);
+        _hlEnd    = m[2] ? parseInt(m[2], 10) : _hlStart;
+        _hlAnchor = _hlStart;
     }
 
-    // After every Prism highlight, wire gutter clicks and redraw highlight bars.
+    // After every Prism highlight, wire gutter clicks and redraw the highlight bars of that card.
     // initLineNumbers() calls Prism, which fires this hook.
     Prism.hooks.add('complete', function (env) {
-        if (env.element && env.element.id === 'codeBlock') {
-            _wireLineClicks();
-            if (_hlStart !== null) {
-                _drawHighlight(_hlStart, _hlEnd);
-                if (!_hlScrolled) {
-                    _scrollToLine(_hlStart);
-                    _hlScrolled = true;
-                }
+        const card = env.element && env.element.closest ? env.element.closest('.file-card') : null;
+        if (!card || !env.element.classList.contains('file-code')) return;
+        _wireLineClicks(card);
+        if (_hlStart !== null && card === _hlFile) {
+            _drawHighlight(_hlStart, _hlEnd);
+            if (!_hlScrolled) {
+                _hlScrolled = true;
+                card.querySelector('.line-hl')?.scrollIntoView({ block: 'center' });
             }
         }
     });
 }
 
-function _wireLineClicks() {
-    const viewPre = document.getElementById('viewPre');
-    if (!viewPre) return;
-    viewPre.querySelectorAll('.line-numbers-rows > span').forEach((span, i) => {
+function _wireLineClicks(card) {
+    card.querySelectorAll('.line-numbers-rows > span').forEach((span, i) => {
         if (span.dataset.lineWired) return;
         span.dataset.lineWired = '1';
         const lineNum = i + 1;
         span.title = `Line ${lineNum}`;
         span.addEventListener('click', (e) => {
+            if (_hlFile !== card) { _clearHighlight(); _hlFile = card; _hlAnchor = null; _hlStart = null; _hlEnd = null; }
             if (e.shiftKey && _hlAnchor !== null) {
                 const a = Math.min(_hlAnchor, lineNum);
                 const b = Math.max(_hlAnchor, lineNum);
@@ -193,27 +188,25 @@ function _wireLineClicks() {
 }
 
 function _clearHighlight() {
-    const viewPre = document.getElementById('viewPre');
-    if (!viewPre) return;
-    viewPre.querySelectorAll('.line-hl').forEach(el => el.remove());
-    viewPre.querySelectorAll('.line-numbers-rows > span').forEach(
-        s => s.classList.remove('hl-active')
-    );
+    document.querySelectorAll('.file-pre .line-hl').forEach(el => el.remove());
+    document.querySelectorAll('.line-numbers-rows > span.hl-active').forEach(s => s.classList.remove('hl-active'));
 }
 
 function _clearLineUrl() {
     const url = new URL(window.location.href);
     url.searchParams.delete('L');
+    url.searchParams.delete('f');
     history.replaceState(null, '', url.toString());
 }
 
 function _drawHighlight(start, end) {
-    const viewPre = document.getElementById('viewPre');
-    const code    = document.getElementById('codeBlock');
+    const card = _hlFile;
+    const viewPre = card && card.querySelector('.file-pre');
+    const code    = card && card.querySelector('.file-code');
     if (!viewPre || !code) return;
 
     // Remove old bars and gutter classes
-    viewPre.querySelectorAll('.line-hl').forEach(el => el.remove());
+    _clearHighlight();
     viewPre.querySelectorAll('.line-numbers-rows > span').forEach(
         (s, i) => s.classList.toggle('hl-active', i + 1 >= start && i + 1 <= end)
     );
@@ -233,27 +226,19 @@ function _drawHighlight(start, end) {
     viewPre.insertBefore(frag, viewPre.firstChild);
 }
 
-function _scrollToLine(lineNum) {
-    const code    = document.getElementById('codeBlock');
-    const viewPre = document.getElementById('viewPre');
-    const scroller = document.querySelector('.view-full');
-    if (!code || !viewPre || !scroller) return;
-    const lineH  = parseFloat(getComputedStyle(code).lineHeight) || 22.4;
-    const padTop = parseFloat(getComputedStyle(viewPre).paddingTop) || 16;
-    scroller.scrollTop = Math.max(0, padTop + (lineNum - 1) * lineH - 80);
-}
-
 function _updateLineUrl(start, end) {
     const url = new URL(window.location.href);
     url.searchParams.set('L', start === end ? String(start) : `${start}-${end}`);
+    const index = fileCards().indexOf(_hlFile);
+    if (index > 0) url.searchParams.set('f', String(index + 1)); else url.searchParams.delete('f');
     history.replaceState(null, '', url.toString());
 }
 
-// ── Discussions ───────────────────────────────────────────────────────────────
+// ── Word wrap ─────────────────────────────────────────────────────────────────
 
 function initWordWrap() {
     const toggle  = document.getElementById('wrapToggle');
-    const viewDiv = document.getElementById('viewFull');
+    const viewDiv = document.getElementById('viewFull');   // the wrap-lines class is read by the CSS of every card
     if (!toggle || !viewDiv) return;
 
     const stored  = localStorage.getItem('wrap_lines');
@@ -362,30 +347,38 @@ function initDiscussions() {
     }));
 }
 
-// ── Markdown pastes: Source | Preview ─────────────────────────────────────────
-// The links work without JavaScript (?view=preview); this makes the switch instant and keeps the URL
-// shareable. The rendered HTML came sanitised from the server, the same way comments are.
+// ── Markdown files: Source | Preview ──────────────────────────────────────────
+// The links work without JavaScript (?view=preview shows every Markdown file rendered); this makes the switch
+// instant. With one file the address bar follows the choice, so the URL stays shareable. The rendered HTML came
+// sanitised from the server, the same way comments are.
 function initMarkdownPreview() {
-    const source  = document.getElementById('viewSource');
-    const preview = document.getElementById('viewPreview');
-    const article = document.getElementById('mdPreview');
-    if (!source || !preview || !article) return;
-    let highlighted = false;
+    const single = fileCards().length === 1;
+    fileCards().forEach(card => {
+        const article = card.querySelector('.paste-preview');
+        if (!article) return;
+        const buttons = document.querySelectorAll('.switch-btn[data-file="' + card.dataset.file + '"]');
+        const source  = Array.from(buttons).find(b => b.dataset.role === 'source');
+        const preview = Array.from(buttons).find(b => b.dataset.role === 'preview');
+        let highlighted = false;
 
-    function show(mode) {
-        const on = mode === 'preview';
-        document.body.classList.toggle('previewing', on);
-        source.classList.toggle('active', !on);
-        preview.classList.toggle('active', on);
-        source.setAttribute('aria-current', String(!on));
-        preview.setAttribute('aria-current', String(on));
-        if (on && !highlighted && window.Prism) { Prism.highlightAllUnder(article); highlighted = true; }
-        const url = new URL(window.location.href);
-        if (on) url.searchParams.set('view', 'preview'); else url.searchParams.delete('view');
-        url.searchParams.delete('L');           // line highlights belong to the source view
-        history.replaceState(null, '', url.toString());
-    }
-    source.addEventListener('click',  e => { e.preventDefault(); show('source'); });
-    preview.addEventListener('click', e => { e.preventDefault(); show('preview'); });
-    if (document.body.classList.contains('previewing') && window.Prism) { Prism.highlightAllUnder(article); highlighted = true; }
+        function show(mode) {
+            const on = mode === 'preview';
+            card.classList.toggle('previewing', on);
+            if (single) document.body.classList.toggle('previewing', on);
+            source.classList.toggle('active', !on);
+            preview.classList.toggle('active', on);
+            source.setAttribute('aria-current', String(!on));
+            preview.setAttribute('aria-current', String(on));
+            if (on && !highlighted && window.Prism) { Prism.highlightAllUnder(article); highlighted = true; }
+            if (single) {
+                const url = new URL(window.location.href);
+                if (on) url.searchParams.set('view', 'preview'); else url.searchParams.delete('view');
+                url.searchParams.delete('L');           // line highlights belong to the source view
+                history.replaceState(null, '', url.toString());
+            }
+        }
+        source.addEventListener('click',  e => { e.preventDefault(); show('source'); });
+        preview.addEventListener('click', e => { e.preventDefault(); show('preview'); });
+        if (card.classList.contains('previewing') && window.Prism) { Prism.highlightAllUnder(article); highlighted = true; }
+    });
 }

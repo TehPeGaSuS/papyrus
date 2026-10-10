@@ -2,14 +2,32 @@
 
 {% block title %}{{ paste.title }} — {{ cfg.site.name }}{% endblock %}
 {% block main_class %}full-page view-page{% endblock %}
-{% block body_class %}{{ 'previewing' if show_preview }}{% endblock %}
+{% block body_class %}{{ 'previewing' if show_preview and files|length == 1 and files[0].preview_html is not none }}{% endblock %}
+
+{% macro file_actions(f, multi=false) %}
+{% set anchor = 'file-%d' % (f.index + 1) if multi else none %}
+{% if f.preview_html is not none %}
+<div class="view-switch" role="group" aria-label="How to show this file">
+    <a class="switch-btn{% if not show_preview %} active{% endif %}" data-role="source" data-file="{{ f.index }}" href="{{ url_for('view_paste', paste_id=paste.id, _anchor=anchor) }}" aria-current="{{ 'false' if show_preview else 'true' }}">Source</a>
+    <a class="switch-btn{% if show_preview %} active{% endif %}" data-role="preview" data-file="{{ f.index }}" href="{{ url_for('view_paste', paste_id=paste.id, view='preview', _anchor=anchor) }}" aria-current="{{ 'true' if show_preview else 'false' }}">Preview</a>
+</div>
+{% endif %}
+<a class="nav-btn" data-role="raw" href="{{ f.raw_path }}" target="_blank" rel="noopener">Raw</a>
+<button type="button" class="nav-btn" data-role="copy" data-file="{{ f.index }}">Copy</button>
+<button type="button" class="nav-btn" data-role="download" data-file="{{ f.index }}">Download</button>
+{% endmacro %}
 
 {% block nav_actions %}
-{% set has_description = paste.title and paste.title != 'Untitled' and paste.title != paste.filename %}
+{% set one = files|length == 1 %}
+{% set has_description = paste.title and paste.title != 'Untitled' and (not one or paste.title != files[0].filename) %}
 <div class="paste-info" title="{{ paste.title }}">
     {% if has_description %}<span class="paste-description">{{ paste.title }}</span>{% endif %}
-    {% if paste.filename or not has_description %}<span class="file-name">{{ paste.filename or 'untitled' }}</span>{% endif %}
-    <span class="file-meta">{{ paste.language }} &middot; {{ line_count }} line{{ '' if line_count == 1 else 's' }} &middot; {{ size }}</span>
+    {% if one %}
+    {% if files[0].filename or not has_description %}<span class="file-name">{{ files[0].filename or 'untitled' }}</span>{% endif %}
+    <span class="file-meta">{{ files[0].language }} &middot; {{ files[0].lines }} line{{ '' if files[0].lines == 1 else 's' }} &middot; {{ files[0].size }}</span>
+    {% else %}
+    <span class="file-name">{{ files|length }} files</span>
+    {% endif %}
 </div>
 <label class="nav-label" title="Show line numbers">
     <input type="checkbox" id="lineNoToggle" checked> Show lines
@@ -17,15 +35,7 @@
 <label class="nav-label" title="Toggle word wrap">
     <input type="checkbox" id="wrapToggle"> Wrap
 </label>
-{% if preview_html is not none %}
-<div class="view-switch" role="group" aria-label="How to show this paste">
-    <a id="viewSource" class="switch-btn{% if not show_preview %} active{% endif %}" href="{{ url_for('view_paste', paste_id=paste.id) }}" aria-current="{{ 'false' if show_preview else 'true' }}">Source</a>
-    <a id="viewPreview" class="switch-btn{% if show_preview %} active{% endif %}" href="{{ url_for('view_paste', paste_id=paste.id, view='preview') }}" aria-current="{{ 'true' if show_preview else 'false' }}">Preview</a>
-</div>
-{% endif %}
-<a id="rawBtn" class="nav-btn" href="{{ url_for('view_paste_raw', paste_id=paste.id) }}" target="_blank" rel="noopener">Raw</a>
-<button id="copyBtn" class="nav-btn">Copy</button>
-<button id="downloadBtn" class="nav-btn">Download</button>
+{% if one %}{{ file_actions(files[0]) }}{% endif %}
 {% if removal_token %}<a href="{{ url_for('remove_paste', token=removal_token) }}" class="nav-btn nav-btn-danger" title="You created this paste">Remove now</a>{% endif %}
 {% if reports_enabled %}<a href="{{ url_for('report', paste_id=paste.id) }}" class="nav-btn" title="Report this paste to the administrator">Report</a>{% endif %}
 <a href="{{ url_for('index') }}" class="nav-btn nav-btn-save">New</a>
@@ -57,13 +67,26 @@
     <button type="button" id="copyRemoval" class="nav-btn">Copy</button>
 </div>{% endif %}
 {% if request.args.get('reported') %}<div class="notice" role="status">Thanks, your report was sent to the administrator.</div>{% endif %}
-<div class="view-full" id="viewFull"
-     data-paste-id="{{ paste.id }}" data-title="{{ paste.title }}" data-filename="{{ paste.filename }}" data-language="{{ paste.language }}">
-    <pre id="viewPre"{% if prism_lang %} class="language-{{ prism_lang }}"{% endif %}><code id="codeBlock"{% if prism_lang %} class="language-{{ prism_lang }}"{% endif %}>{{ paste.content }}</code></pre>
+<div class="file-list{% if files|length > 1 %} multi{% endif %}" id="viewFull" data-paste-id="{{ paste.id }}" data-title="{{ paste.title }}" data-highlight-file="{{ highlight_file }}">
+    {% for f in files %}
+    {% set previewing = show_preview and f.preview_html is not none %}
+    <section class="file-card{% if previewing %} previewing{% endif %}" id="file-{{ loop.index }}" data-file="{{ f.index }}" data-filename="{{ f.filename }}" data-language="{{ f.language }}" data-raw="{{ f.raw_path }}">
+        {% if files|length > 1 %}
+        <header class="file-head">
+            <div class="file-head-info"><span class="file-name">{{ f.filename }}</span>
+            <span class="file-meta">{{ f.language }} &middot; {{ f.lines }} line{{ '' if f.lines == 1 else 's' }} &middot; {{ f.size }}</span></div>
+            <div class="file-head-actions">{{ file_actions(f, true) }}</div>
+        </header>
+        {% endif %}
+        <div class="view-full">
+            <pre class="file-pre{% if f.prism_lang %} language-{{ f.prism_lang }}{% endif %}"><code class="file-code{% if f.prism_lang %} language-{{ f.prism_lang }}{% endif %}">{{ f.content }}</code></pre>
+        </div>
+        {% if f.preview_html is not none %}
+        <article class="paste-preview markdown-body" aria-label="Rendered Markdown">{{ f.preview_html }}</article>
+        {% endif %}
+    </section>
+    {% endfor %}
 </div>
-{% if preview_html is not none %}
-<article id="mdPreview" class="paste-preview markdown-body" aria-label="Rendered Markdown">{{ preview_html }}</article>
-{% endif %}
 {% if paste.discussions_enabled %}
 <div id="discussionsPanel" class="discussions-panel">
     <div class="discussions-header" id="discussionsToggle">

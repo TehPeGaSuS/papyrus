@@ -31,7 +31,7 @@ import tempfile
 import threading
 import time
 from contextlib import contextmanager
-from urllib.parse import urlsplit
+from urllib.parse import quote, urlsplit
 
 __version__ = '1.0.0'   # the one place the version lives; pyproject.toml reads it from here
 
@@ -338,14 +338,21 @@ def _create_tables(conn):
         CREATE TABLE IF NOT EXISTS pastes (
             id                  TEXT PRIMARY KEY,
             title               TEXT NOT NULL DEFAULT 'Untitled',
-            filename            TEXT NOT NULL DEFAULT '',
-            content             TEXT NOT NULL,
-            language            TEXT NOT NULL DEFAULT 'text',
             created_at          TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             expires_at          TEXT,
             views               INTEGER DEFAULT 0,
             removal_hash        TEXT NOT NULL DEFAULT '',   -- sha256 of the removal token, never the token
             discussions_enabled INTEGER DEFAULT 0
+        )
+    ''')
+    conn.execute('''
+        CREATE TABLE IF NOT EXISTS files (
+            paste_id    TEXT NOT NULL,
+            position    INTEGER NOT NULL,                 -- 0 is the first file
+            filename    TEXT NOT NULL DEFAULT '',         -- unique within the paste (numbered if repeated)
+            language    TEXT NOT NULL DEFAULT 'text',
+            content     TEXT NOT NULL,
+            PRIMARY KEY (paste_id, position)
         )
     ''')
     conn.execute('CREATE INDEX IF NOT EXISTS idx_pastes_removal ON pastes(removal_hash)')
@@ -389,7 +396,7 @@ def _hash_token(token):
 def _new_removal_token():
     return secrets.token_urlsafe(24)
 
-SCHEMA_VERSION = 1   # stored in the database (PRAGMA user_version); bump it when the layout changes
+SCHEMA_VERSION = 2   # stored in the database (PRAGMA user_version); bump it when the layout changes
 
 def init_db():
     """Initialise the database. Thread-safe and idempotent: runs DDL only once per process."""
@@ -453,6 +460,7 @@ def generate_paste_id():
     return secrets.token_hex(16)[:length]
 
 def _delete_paste(conn, paste_id):
+    conn.execute('DELETE FROM files WHERE paste_id = ?', (paste_id,))
     conn.execute('DELETE FROM reports WHERE paste_id = ?', (paste_id,))
     conn.execute('DELETE FROM comments WHERE paste_id = ?', (paste_id,))
     conn.execute('DELETE FROM pastes WHERE id = ?', (paste_id,))
@@ -548,6 +556,16 @@ def _get_paste_or_abort(paste_id):
             conn.commit()
             abort(410)
     return paste
+
+def _paste_files(paste_id):
+    """The files of a paste, in order."""
+    with _db() as conn:
+        return conn.execute('SELECT position, filename, language, content FROM files WHERE paste_id = ?'
+                            ' ORDER BY position', (paste_id,)).fetchall()
+
+def _first_content(conn, paste_id):
+    row = conn.execute('SELECT content FROM files WHERE paste_id = ? ORDER BY position LIMIT 1', (paste_id,)).fetchone()
+    return row['content'] if row else ''
 
 def _clean_title(title):
     if not isinstance(title, str):
@@ -795,7 +813,7 @@ def _prism_language(language):
 @app.route('/')
 def index():
     return render_template('index.html', language_hints=_language_hints(), max_paste_bytes=MAX_PASTE_BYTES,
-                           expiry_options=_EXPIRY_OPTIONS, default_expiry=_DEFAULT_EXPIRY)
+                           expiry_options=_EXPIRY_OPTIONS, default_expiry=_DEFAULT_EXPIRY, max_files=MAX_FILES)
 
 @app.route('/theme.css')
 def theme_css():
@@ -813,26 +831,67 @@ class _PasteError(Exception):
         super().__init__(message)
         self.message, self.status = message, status
 
-def _store_paste(data):
-    """Validate the fields of a new paste and store it: (paste_id, removal_token, expires_at)."""
-    content = data.get('content')
-    if not content or not isinstance(content, str) or not content.strip():
-        raise _PasteError('content must be a non-empty string', 400)
-    if len(content.encode('utf-8')) > MAX_PASTE_BYTES:
-        raise _PasteError('Paste too large', 413)
-    if '\x00' in content:  # images and other binary formats are full of NUL bytes
-        raise _PasteError('Only text is accepted', 415)
+MAX_FILES = max(1, min(int(_pastes.get('max_files', 10)), 50))     # pastes.max_files; more than 50 is silly
 
-    filename = _clean_filename(data.get('filename'))
+def _unique_filename(name, taken):
+    """'a.py' -> 'a-2.py', 'a-3.py' ... so every file in a paste has its own raw URL."""
+    if name not in taken:
+        return name
+    stem, ext = os.path.splitext(name)
+    n = 2
+    while True:
+        suffix = f'-{n}'
+        candidate = stem[:MAX_FILENAME_LENGTH - len(ext) - len(suffix)] + suffix + ext
+        if candidate not in taken:
+            return candidate
+        n += 1
+
+def _clean_files(data):
+    """The submitted files as [{'filename', 'language', 'content'}], validated, in order.
+
+    Either {"files": [{content, filename, language}, ...]} or the single-file fields
+    content/filename/language at the top level.
+    """
+    submitted = data.get('files')
+    if submitted is None:
+        submitted = [{'content': data.get('content'), 'filename': data.get('filename'), 'language': data.get('language')}]
+    if not isinstance(submitted, list) or not submitted:
+        raise _PasteError('files must be a non-empty list', 400)
+    if len(submitted) > MAX_FILES:
+        raise _PasteError(f'A paste holds at most {MAX_FILES} files', 413)
+    many = len(submitted) > 1
+    cleaned, taken, total = [], set(), 0
+    for number, item in enumerate(submitted, 1):
+        if not isinstance(item, dict):
+            raise _PasteError(f'File {number} must be an object', 400)
+        given = _clean_filename(item.get('filename'))
+        where = f'File {number}{f" ({given})" if given else ""}: ' if many else ''
+        content = item.get('content')
+        if not content or not isinstance(content, str) or not content.strip():
+            raise _PasteError(f'{where}content must be a non-empty string', 400)
+        if '\x00' in content:  # images and other binary formats are full of NUL bytes
+            raise _PasteError(f'{where}Only text is accepted', 415)
+        total += len(content.encode('utf-8'))
+        if total > MAX_PASTE_BYTES:
+            raise _PasteError('Paste too large', 413)
+        name = _unique_filename(given or (f'file-{number}' if many else ''), taken)
+        taken.add(name)
+        requested = item.get('language')
+        if isinstance(requested, str) and requested not in ('', 'auto'):
+            language = _clean_language(requested)         # an explicit choice always wins
+        else:
+            language = _detect_language(name if given else '') or _pastes.get('default_language', 'text')
+        cleaned.append({'filename': name, 'language': language, 'content': content, 'named': bool(given)})
+    return cleaned
+
+def _store_paste(data):
+    """Validate a new paste (one file or several) and store it: (paste_id, token, expires_at, files)."""
+    files = _clean_files(data)
     raw_title = data.get('title')
     title = _clean_title(raw_title)
-    if filename and not (isinstance(raw_title, str) and raw_title.strip()):
-        title = filename                              # no description given: show the filename
-    requested = data.get('language')
-    if isinstance(requested, str) and requested not in ('', 'auto'):
-        language = _clean_language(requested)         # an explicit choice always wins
-    else:
-        language = _detect_language(filename) or _pastes.get('default_language', 'text')
+    if not (isinstance(raw_title, str) and raw_title.strip()):
+        first = files[0]['filename'] if files[0]['named'] else ''
+        title = first or 'Untitled'                   # no description given: show the first filename
     discussions = bool(data.get('discussions', False))
     expiry = _expiry_option(data.get('expires_in'))
     if expiry is None:
@@ -846,24 +905,36 @@ def _store_paste(data):
             paste_id = generate_paste_id()
             try:
                 conn.execute(
-                    'INSERT INTO pastes (id, title, filename, content, language, expires_at, removal_hash,'
-                    ' discussions_enabled) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
-                    (paste_id, title, filename, content, language, expires_at, _hash_token(token), int(discussions)))
-                conn.commit()
-                return paste_id, token, expires_at
+                    'INSERT INTO pastes (id, title, expires_at, removal_hash, discussions_enabled)'
+                    ' VALUES (?, ?, ?, ?, ?)',
+                    (paste_id, title, expires_at, _hash_token(token), int(discussions)))
             except sqlite3.IntegrityError:
                 continue
+            conn.executemany(
+                'INSERT INTO files (paste_id, position, filename, language, content) VALUES (?, ?, ?, ?, ?)',
+                [(paste_id, i, f['filename'], f['language'], f['content']) for i, f in enumerate(files)])
+            conn.commit()
+            return paste_id, token, expires_at, files
     raise _PasteError('Service temporarily unavailable', 503)
+
+def _file_raw_path(paste_id, index, filename):
+    """The first file is /raw/<id>; every file is also reachable by name at /raw/<id>/<filename>."""
+    return f'/raw/{paste_id}' if index == 0 else f'/raw/{paste_id}/{quote(filename, safe="")}'
 
 def _text_response(body, status=200):
     return Response(body, status=status, mimetype='text/plain')
 
-def _creation_summary(paste_id, token):
-    """What `curl` prints: the paste, its raw text, and the link that removes it."""
-    base = request.host_url
-    return (f'Paste URL:   {base}{paste_id}\n'
-            f'Raw URL:     {base}raw/{paste_id}\n'
-            f'Removal URL: {base}remove/{token}\n')
+def _creation_summary(paste_id, token, files):
+    """What `curl` prints: the paste, the raw text of each file, and the link that removes it."""
+    base = request.host_url.rstrip('/')
+    lines = [f'Paste URL:   {base}/{paste_id}']
+    if len(files) == 1:
+        lines.append(f'Raw URL:     {base}{_file_raw_path(paste_id, 0, files[0]["filename"])}')
+    else:
+        lines += [f'Raw URL ({f["filename"]}): {base}{_file_raw_path(paste_id, i, f["filename"])}'
+                  for i, f in enumerate(files)]
+    lines.append(f'Removal URL: {base}/remove/{token}')
+    return '\n'.join(lines) + '\n'
 
 def _set_removal_cookie(response, paste_id, token, expires_at):
     """Remember in this browser that it made the paste, so the page keeps offering "Remove now"
@@ -900,11 +971,11 @@ def create_paste():
         if not isinstance(data, dict):
             return fail('JSON body required', 400)
     try:
-        paste_id, token, expires_at = _store_paste(data)
+        paste_id, token, expires_at, files = _store_paste(data)
     except _PasteError as e:
         return fail(e.message, e.status)
     if plain_text:
-        return _text_response(_creation_summary(paste_id, token))
+        return _text_response(_creation_summary(paste_id, token, files))
     response = jsonify({'paste_id': paste_id, 'url': f'/{paste_id}',
                         'removal_token': token, 'removal_url': f'/remove/{token}'})
     _set_removal_cookie(response, paste_id, token, expires_at)
@@ -917,14 +988,17 @@ def create_paste_curl():
     if not _check_rate_limit(_client_ip(), key_prefix='create', limit=10):
         return _text_response('Rate limit exceeded. Please wait a few minutes.\n', 429)
     form = request.form
-    data = {'content': form.get('raw'), 'title': form.get('title'), 'filename': form.get('filename'),
-            'language': form.get('language'), 'expires_in': form.get('expires_in'),
-            'discussions': _flag(form.get('discussions'))}
+    raws, names, languages = form.getlist('raw'), form.getlist('filename'), form.getlist('language')
+    # Repeat the fields for more files: -F 'raw=<a.py' -F filename=a.py -F 'raw=<b.sh' -F filename=b.sh
+    files = [{'content': raw, 'filename': names[i] if i < len(names) else '',
+              'language': languages[i] if i < len(languages) else None} for i, raw in enumerate(raws)]
+    data = {'files': files or None, 'content': None, 'title': form.get('title'),
+            'expires_in': form.get('expires_in'), 'discussions': _flag(form.get('discussions'))}
     try:
-        paste_id, token, _ = _store_paste(data)
+        paste_id, token, _, stored = _store_paste(data)
     except _PasteError as e:
         return _text_response(e.message + '\n', e.status)
-    return _text_response(_creation_summary(paste_id, token))
+    return _text_response(_creation_summary(paste_id, token, stored))
 
 # ── Removing a paste ──────────────────────────────────────────────────────────
 
@@ -967,23 +1041,40 @@ def view_paste(paste_id):
                 'SELECT id, parent_id, nick, content, created_at FROM comments WHERE paste_id = ?'
                 ' ORDER BY created_at ASC, rowid ASC', (paste_id,)).fetchall()
         conn.commit()
-    content = paste['content']
-    lines = content.count('\n') + (0 if content.endswith('\n') else 1)
-    previewable = paste['language'] == 'markdown' and len(content.encode('utf-8')) <= MAX_PREVIEW_BYTES
+    files = []
+    for f in _paste_files(paste_id):
+        content = f['content']
+        previewable = f['language'] == 'markdown' and len(content.encode('utf-8')) <= MAX_PREVIEW_BYTES
+        files.append({
+            'index': f['position'], 'filename': f['filename'], 'language': f['language'], 'content': content,
+            'prism_lang': _prism_language(f['language']),
+            'lines': content.count('\n') + (0 if content.endswith('\n') else 1),
+            'size': _human_size(len(content.encode('utf-8'))),
+            'preview_html': Markup(render_markdown(content)) if previewable else None,
+            'raw_path': _file_raw_path(paste_id, f['position'], f['filename']),
+        })
+    highlight = request.args.get('f', '')
     cookie = request.cookies.get('removal', '')
     owner = bool(cookie) and len(cookie) < 200 and bool(paste['removal_hash']) \
         and hmac.compare_digest(_hash_token(cookie), paste['removal_hash'])
     return render_template('view.html', paste=paste, comments=_comment_tree(rows),
                            removal_token=cookie if owner else None,
-                           comment_count=len(rows), prism_lang=_prism_language(paste['language']),
-                           preview_html=Markup(render_markdown(content)) if previewable else None,
-                           show_preview=previewable and request.args.get('view') == 'preview',
-                           line_count=lines, size=_human_size(len(content.encode('utf-8'))))
+                           comment_count=len(rows), files=files,
+                           show_preview=request.args.get('view') == 'preview',
+                           highlight_file=int(highlight) if highlight.isdigit() and 0 < int(highlight) <= len(files) else 1)
 
 @app.route('/raw/<string:paste_id>')
 def view_paste_raw(paste_id):
-    paste = _get_paste_or_abort(paste_id)
-    return Response(paste['content'], mimetype='text/plain; charset=utf-8')
+    _get_paste_or_abort(paste_id)
+    return Response(_paste_files(paste_id)[0]['content'], mimetype='text/plain; charset=utf-8')
+
+@app.route('/raw/<string:paste_id>/<path:filename>')
+def view_paste_raw_file(paste_id, filename):
+    _get_paste_or_abort(paste_id)
+    for f in _paste_files(paste_id):
+        if f['filename'] == filename:
+            return Response(f['content'], mimetype='text/plain; charset=utf-8')
+    abort(404)
 
 @app.route('/api/languages')
 def get_languages():
@@ -1033,9 +1124,12 @@ def recent_pastes():
     with _db() as conn:
         pastes = conn.execute(
             '''
-            SELECT id, title, language, created_at, expires_at, views FROM pastes
-            WHERE expires_at IS NULL OR expires_at > ?
-            ORDER BY created_at DESC LIMIT ?
+            SELECT p.id, p.title, p.created_at, p.expires_at, p.views,
+                   (SELECT language FROM files f WHERE f.paste_id = p.id ORDER BY position LIMIT 1) AS language,
+                   (SELECT COUNT(*) FROM files f WHERE f.paste_id = p.id) AS file_count
+            FROM pastes p
+            WHERE p.expires_at IS NULL OR p.expires_at > ?
+            ORDER BY p.created_at DESC LIMIT ?
             ''',
             (now, limit)
         ).fetchall()
@@ -1152,9 +1246,10 @@ def report(paste_id):
                                    (comment_id, paste_id)).fetchone()
         if comment is None:
             abort(404)
+    first = _paste_files(paste_id)[0]['content']
     if request.method == 'GET':
         return render_template('report.html', paste=paste, comment=comment, reasons=_REPORT_REASONS,
-                               snippet=_snippet(comment['content'] if comment else paste['content'], 300))
+                               snippet=_snippet(comment['content'] if comment else first, 300))
 
     if not _is_same_origin():
         abort(403, 'Cross-origin request blocked.')
@@ -1219,7 +1314,9 @@ def admin_dashboard():
         return redirect(url_for('admin_login'))
     with _db() as conn:
         pastes = conn.execute(
-            'SELECT p.id, p.title, p.language, p.created_at, p.expires_at, p.views,'
+            'SELECT p.id, p.title, p.created_at, p.expires_at, p.views,'
+            ' (SELECT language FROM files f WHERE f.paste_id = p.id ORDER BY position LIMIT 1) AS language,'
+            ' (SELECT COUNT(*) FROM files f WHERE f.paste_id = p.id) AS file_count,'
             ' (SELECT COUNT(*) FROM comments c WHERE c.paste_id = p.id) AS comments,'
             ' (SELECT COUNT(*) FROM reports r WHERE r.paste_id = p.id) AS reports'
             ' FROM pastes p ORDER BY p.created_at DESC'
@@ -1235,7 +1332,7 @@ def _report_queue(conn, limit=200):
         'SELECT paste_id, comment_id, COUNT(*) AS n, MAX(created_at) AS last FROM reports'
         ' GROUP BY paste_id, comment_id ORDER BY n DESC, last DESC LIMIT ?', (limit,)).fetchall()
     for g_ in groups:
-        paste = conn.execute('SELECT id, title, content FROM pastes WHERE id = ?', (g_['paste_id'],)).fetchone()
+        paste = conn.execute('SELECT id, title FROM pastes WHERE id = ?', (g_['paste_id'],)).fetchone()
         if paste is None:
             continue
         comment = None
@@ -1248,7 +1345,7 @@ def _report_queue(conn, limit=200):
         queue.append({
             'paste_id': paste['id'], 'comment_id': g_['comment_id'], 'count': g_['n'], 'last': g_['last'],
             'title': paste['title'], 'nick': comment['nick'] if comment else '',
-            'snippet': _snippet(comment['content'] if comment else paste['content']),
+            'snippet': _snippet(comment['content'] if comment else _first_content(conn, paste['id'])),
             'reasons': conn.execute('SELECT reason, COUNT(*) AS n FROM reports WHERE paste_id = ? AND comment_id = ?'
                                     ' GROUP BY reason ORDER BY n DESC', where).fetchall(),
             'notes': [r['note'] for r in conn.execute(

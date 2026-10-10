@@ -8,25 +8,47 @@
 {% include "_theme_controls.html" %}
 {% endblock %}
 
+{% macro file_card() %}
+<section class="file-editor">
+    <div class="editor-bar">
+        <input type="text" class="compose-filename f-name" placeholder="Filename including extension (optional)" maxlength="100" autocomplete="off" spellcheck="false" aria-label="Filename" title="Filename including extension, e.g. deploy.sh. The extension picks the syntax highlighting.">
+        <select class="nav-select f-lang" title="Syntax highlighting" aria-label="Language"></select>
+        <select class="nav-select f-indent-mode" title="Indent mode" aria-label="Indent mode">
+            <option value="spaces">Spaces</option>
+            <option value="tabs">Tabs</option>
+        </select>
+        <select class="nav-select f-indent-size" title="Indent size" aria-label="Indent size">
+            <option value="2">2</option>
+            <option value="4" selected>4</option>
+            <option value="8">8</option>
+        </select>
+        <select class="nav-select f-wrap" title="Line wrap mode" aria-label="Line wrap mode">
+            <option value="off" selected>No wrap</option>
+            <option value="soft">Soft wrap</option>
+        </select>
+        <span class="editor-bar-spacer"></span>
+        <button type="button" class="nav-btn f-remove" hidden>Remove file</button>
+    </div>
+    <textarea
+        class="full-editor f-content"
+        data-max-bytes="{{ max_paste_bytes }}"
+        placeholder="Paste your code or text here, or drop a text file…"
+        spellcheck="false"
+        autocomplete="off"
+        autocorrect="off"
+        autocapitalize="off"></textarea>
+</section>
+{% endmacro %}
+
 {% block content %}
-<div class="editor-bar">
-    <input type="text" id="filename" class="compose-filename" placeholder="Filename including extension (optional)" maxlength="100" autocomplete="off" spellcheck="false" aria-label="Filename" title="Filename including extension, e.g. deploy.sh. The extension picks the syntax highlighting.">
-    <select id="language" class="nav-select" title="Syntax highlighting" aria-label="Language"></select>
-    <select id="indentMode" class="nav-select" title="Indent mode" aria-label="Indent mode">
-        <option value="spaces">Spaces</option>
-        <option value="tabs">Tabs</option>
-    </select>
-    <select id="indentSize" class="nav-select" title="Indent size" aria-label="Indent size">
-        <option value="2">2</option>
-        <option value="4" selected>4</option>
-        <option value="8">8</option>
-    </select>
-    <select id="wrapMode" class="nav-select" title="Line wrap mode" aria-label="Line wrap mode">
-        <option value="off" selected>No wrap</option>
-        <option value="soft">Soft wrap</option>
-    </select>
-    <span class="editor-bar-spacer"></span>
-    <label class="bar-field">Expires
+<div id="cards" class="file-editors" data-max-files="{{ max_files }}">
+    {{ file_card() }}
+</div>
+<template id="cardTemplate">{{ file_card() }}</template>
+<div class="editor-bar paste-bar" id="pasteBar" hidden></div>
+<div class="paste-controls" id="pasteControls">
+    <button id="addFileBtn" type="button" class="nav-btn" title="Add another file to this paste">Add file</button>
+    <label class="bar-field bar-field-first">Expires
         <select id="expires_in" class="nav-select" title="How long the paste is kept">
             {% for opt in expiry_options %}
             <option value="{{ opt.value }}" {% if opt.value == default_expiry %}selected{% endif %}>{{ opt.label }}</option>
@@ -39,17 +61,8 @@
     <button id="clearBtn" class="nav-btn" type="button">Clear</button>
     <button id="submitBtn" class="nav-btn nav-btn-save" type="button">Save</button>
 </div>
-<textarea
-    id="content"
-    class="full-editor"
-    data-max-bytes="{{ max_paste_bytes }}"
-    placeholder="Paste your code or text here, or drop a text file…"
-    spellcheck="false"
-    autocomplete="off"
-    autocorrect="off"
-    autocapitalize="off"></textarea>
-<div class="editor-hint">Tab indents and Shift+Tab outdents. Use <kbd>Control+Shift+M</kbd> to toggle the <kbd>tab</kbd> key moving focus (or press <kbd>Esc</kbd>, then <kbd>Tab</kbd>). Drop a text file on the page or <button type="button" id="openFileBtn" class="link-btn">open a file</button>. <span id="fileNote" class="file-note" role="status" aria-live="polite"></span></div>
-<input type="file" id="openFile" hidden tabindex="-1" aria-hidden="true">
+<div class="editor-hint">Tab indents and Shift+Tab outdents. Use <kbd>Control+Shift+M</kbd> to toggle the <kbd>tab</kbd> key moving focus (or press <kbd>Esc</kbd>, then <kbd>Tab</kbd>). Drop text files on the page or <button type="button" id="openFileBtn" class="link-btn">open files</button>. <span id="fileNote" class="file-note" role="status" aria-live="polite"></span></div>
+<input type="file" id="openFile" multiple hidden tabindex="-1" aria-hidden="true">
 <script type="application/json" id="languageHints">{{ language_hints | tojson }}</script>
 {% endblock %}
 

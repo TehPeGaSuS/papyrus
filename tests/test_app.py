@@ -252,7 +252,7 @@ def test_create_validation(client):
     assert client.post('/create', json=['x']).status_code == 400
     ok = client.post('/create', json={'content': 'x', 'title': 5, 'language': '../../x'})
     pid = ok.get_json()['paste_id']
-    row = db().execute('SELECT title, language FROM pastes WHERE id=?', (pid,)).fetchone()
+    row = stored(pid)
     assert row['title'] == 'Untitled' and row['language'] == papyrus._pastes.get('default_language', 'text')
 
 
@@ -270,8 +270,9 @@ def test_curl_style_create(client):
     assert urls['Paste URL'] == f'http://localhost/{pid}' and urls['Raw URL'] == f'http://localhost/raw/{pid}'
     assert 'X-Deletion-Token' not in r.headers          # the removal URL replaced the header
     assert client.get(f'/raw/{pid}').get_data(as_text=True) == 'print(1)\n'
-    row = db().execute('SELECT title, language, expires_at FROM pastes WHERE id=?', (pid,)).fetchone()
-    assert (row['title'], row['language']) == ('notes', 'python') and row['expires_at']
+    row = stored(pid)
+    assert (row['title'], row['language']) == ('notes', 'python')
+    assert db().execute('SELECT expires_at FROM pastes WHERE id=?', (pid,)).fetchone()[0]
 
 
 # ── Comments / Markdown ───────────────────────────────────────────────────────
@@ -817,7 +818,9 @@ def test_detection_only_returns_languages_the_site_offers(monkeypatch):
 
 
 def stored(pid):
-    return db().execute('SELECT title, filename, language FROM pastes WHERE id=?', (pid,)).fetchone()
+    """title, filename, language and content of the paste's first file."""
+    return db().execute('SELECT p.title, f.filename, f.language, f.content FROM pastes p JOIN files f ON f.paste_id = p.id'
+                        ' WHERE p.id = ? ORDER BY f.position LIMIT 1', (pid,)).fetchone()
 
 
 def test_filename_picks_the_language_and_the_title(client):
@@ -888,11 +891,11 @@ def test_human_size(n, text):
 
 def test_editor_page_has_the_gist_style_controls(client):
     html = client.get('/').get_data(as_text=True)
-    for fragment in ('id="title"', 'placeholder="Description (optional)"', 'id="filename"', 'id="language"',
+    for fragment in ('id="title"', 'placeholder="Description (optional)"', 'f-name', 'f-lang',
                      'Indent mode', 'value="spaces"', 'value="tabs"', 'Indent size',
                      'Line wrap mode', 'value="soft"', 'value="off"', 'No wrap', 'Soft wrap'):
         assert fragment in html, fragment
-    assert [m for m in re.findall(r'<option value="(\d)"', html) if m in '248'] == ['2', '4', '8']
+    assert [m for m in re.findall(r'<option value="(\d)"', html) if m in '248'][:3] == ['2', '4', '8']   # (the card is also in the <template>)
     hints = json.loads(re.search(r'id="languageHints">(.*?)</script>', html, re.S).group(1))
     assert hints['extensions']['sh'] == 'bash' and hints['names']['dockerfile'] == 'docker'
 
@@ -1279,13 +1282,13 @@ def test_every_paste_control_lives_in_the_file_bar(client):
     top_bar, form = html.split('</nav>')
     # Top bar: logo | description | theme toggle. Nothing else.
     assert top_bar.index('class="brand"') < top_bar.index('id="title"') < top_bar.index('id="themeToggle"')
-    for control in ('submitBtn', 'clearBtn', 'expires_in', 'allowDiscussions', 'filename', 'language', 'indentMode'):
+    for control in ('submitBtn', 'clearBtn', 'expires_in', 'allowDiscussions', 'f-name', 'f-lang', 'f-indent-mode'):
         assert control not in top_bar, control
-    # Filename | Language | Indent mode | Indent size | Wrap | Expiry | Allow comments | Clear | Save
-    order = [form.index(f'id="{c}"') for c in ('filename', 'language', 'indentMode', 'indentSize', 'wrapMode',
-                                                 'expires_in', 'allowDiscussions', 'clearBtn', 'submitBtn')]
+    # Per file: Filename | Language | Indent mode | Indent size | Wrap | Remove file. Per paste, below (script moves
+    # them into the first file's bar while there is one file): Add file | Expiry | Allow comments | Clear | Save
+    order = [form.index(c) for c in ('f-name', 'f-lang', 'f-indent-mode', 'f-indent-size', 'f-wrap', 'f-remove', 'f-content',
+                                     'id="addFileBtn"', 'id="expires_in"', 'id="allowDiscussions"', 'id="clearBtn"', 'id="submitBtn"')]
     assert order == sorted(order)
-    assert form.index('id="submitBtn"') < form.index('id="content"')       # the bar sits above the editor
     assert 'Allow comments' in form and not re.search(r'>\s*Discuss\s*<|> Discuss\b', html)   # the old label is gone
     assert 'Control+Shift+M' in form
 
@@ -1301,7 +1304,7 @@ def test_filename_and_stats_live_in_the_top_bar(client):
     assert 'class="file-header"' not in html                      # no separate strip under the bar any more
     # Logo | filename (stats) | Show lines | Wrap | Raw | Copy | Download | Report | New | Theme toggle
     order = [nav.index(m) for m in ('class="brand"', 'class="file-name"', 'class="file-meta"', 'id="lineNoToggle"',
-                                    'id="wrapToggle"', 'id="rawBtn"', 'id="copyBtn"', 'id="downloadBtn"',
+                                    'id="wrapToggle"', 'data-role="raw"', 'data-role="copy"', 'data-role="download"',
                                     '>Report<', '>New<', 'id="themeToggle"')]
     assert order == sorted(order)
     assert 'Show lines' in nav and 'bash &middot; 2 lines &middot; 14 B' in nav
@@ -1616,12 +1619,12 @@ def md_paste(client, content=MD, **extra):
 
 def test_markdown_pastes_get_a_source_preview_switch(client):
     html = client.get('/' + md_paste(client)).get_data(as_text=True)
-    assert 'id="viewSource"' in html and 'id="viewPreview"' in html and 'class="view-switch"' in html
+    assert 'data-role="source"' in html and 'data-role="preview"' in html and 'class="view-switch"' in html
     nav = html.split('</nav>')[0]
     # After the checkboxes, which Preview hides: the right-aligned group re-packs when they vanish, and a
     # switch in front of them would jump away from the cursor. Behind them it stays where it is.
-    assert nav.index('id="wrapToggle"') < nav.index('id="viewSource"') < nav.index('id="viewPreview"') < nav.index('id="rawBtn"')
-    article = re.search(r'<article id="mdPreview".*?</article>', html, re.S).group(0)
+    assert nav.index('id="wrapToggle"') < nav.index('data-role="source"') < nav.index('data-role="preview"') < nav.index('data-role="raw"')
+    article = re.search(r'<article class="paste-preview[^>]*>.*?</article>', html, re.S).group(0)
     assert '<h1>Title</h1>' in article and '<strong>bold</strong>' in article and '<table>' in article
     assert 'href="https://example.org"' in article and 'class="language-python"' in article
     assert 'print(1)' in html and '# Title' in html                  # the source is still there
@@ -1630,11 +1633,11 @@ def test_markdown_pastes_get_a_source_preview_switch(client):
 def test_source_is_the_default_and_a_link_opens_the_preview(client):
     pid = md_paste(client)
     plain = client.get(f'/{pid}').get_data(as_text=True)
-    assert '<body class="">' in plain and re.search(r'id="viewSource"[^>]*>|class="switch-btn active" href="/' + pid + '"', plain)
-    assert 'class="switch-btn active" href="/%s"' % pid in plain
+    assert '<body class="">' in plain
+    assert 'class="switch-btn active" data-role="source" data-file="0" href="/%s"' % pid in plain
     shared = client.get(f'/{pid}?view=preview').get_data(as_text=True)
     assert '<body class="previewing">' in shared                      # rendered on the server: no flash, no JavaScript
-    assert 'class="switch-btn active" href="/%s?view=preview"' % pid in shared
+    assert 'class="switch-btn active" data-role="preview" data-file="0" href="/%s?view=preview"' % pid in shared
     assert '<body class="">' in client.get(f'/{pid}?view=bogus').get_data(as_text=True)
 
 
@@ -1643,20 +1646,20 @@ def test_other_pastes_have_no_preview(client):
                            ('x', {})):
         pid = create(client, content=content, **extra)['paste_id']
         html = client.get(f'/{pid}?view=preview').get_data(as_text=True)
-        assert 'id="viewPreview"' not in html and 'id="mdPreview"' not in html, extra
+        assert 'data-role="preview"' not in html and 'class="paste-preview' not in html, extra
         assert '<body class="">' in html                              # ?view=preview is ignored
 
 
 def test_the_language_menu_choice_counts_too(client):
     pid = create(client, content='# hi', language='markdown')['paste_id']      # no filename at all
-    assert 'id="mdPreview"' in client.get(f'/{pid}').get_data(as_text=True)
+    assert 'class="paste-preview' in client.get(f'/{pid}').get_data(as_text=True)
 
 
 def test_hostile_markdown_is_sanitised_in_the_preview(client):
     evil = ('<script>alert(1)</script>\n\n<img src=x onerror=alert(2)>\n\n[click](javascript:alert(3))\n\n'
             '![tracker](http://tracker.example/p.png)\n\n<a href="http://evil" onclick="y()">raw</a>\n\n'
             '<iframe src="http://evil"></iframe>\n\n<style>body{display:none}</style>\n')
-    article = re.search(r'<article id="mdPreview".*?</article>',
+    article = re.search(r'<article class="paste-preview.*?</article>',
                         client.get('/' + md_paste(client, evil)).get_data(as_text=True), re.S).group(0)
     # Whatever the Markdown said, only the sanitiser's tags and attributes can be in the page.
     allowed_tags = papyrus._MD_TAGS | {'article'}
@@ -1664,7 +1667,7 @@ def test_hostile_markdown_is_sanitised_in_the_preview(client):
         assert tag in allowed_tags, tag
         names = set(re.findall(r'\s([a-z-]+)=', attrs))
         assert names <= {'a': {'href', 'rel', 'title'}, 'code': {'class'},
-                         'article': {'id', 'class', 'aria-label'}}.get(tag, set()), (tag, names)
+                         'article': {'class', 'aria-label'}}.get(tag, set()), (tag, names)
     assert not [a for a in re.findall(r'<a ([^>]*)>', article) if 'evil' in a]        # no real link to it
     assert 'href="javascript' not in article.lower()
     assert '&lt;script&gt;' in article                              # raw HTML is shown as inert text
@@ -1675,9 +1678,9 @@ def test_big_markdown_is_not_previewable(client):
     big = 'word ' * (papyrus.MAX_PREVIEW_BYTES // 5 + 100)              # just over the limit
     assert len(big.encode()) > papyrus.MAX_PREVIEW_BYTES
     html = client.get('/' + md_paste(client, big)).get_data(as_text=True)
-    assert 'id="viewPreview"' not in html and 'id="mdPreview"' not in html
+    assert 'data-role="preview"' not in html and 'class="paste-preview' not in html
     ok = 'word ' * (papyrus.MAX_PREVIEW_BYTES // 5 - 100)
-    assert 'id="mdPreview"' in client.get('/' + md_paste(client, ok)).get_data(as_text=True)
+    assert 'class="paste-preview' in client.get('/' + md_paste(client, ok)).get_data(as_text=True)
 
 
 def test_raw_and_downloads_stay_the_source(client):
@@ -1701,7 +1704,7 @@ def test_preview_markup_is_in_the_script_and_stylesheet():
     js = open(os.path.join(root, 'static', 'js', 'paste_view.js'), encoding='utf-8').read()
     css = open(os.path.join(root, 'static', 'css', 'style.css'), encoding='utf-8').read()
     assert 'initMarkdownPreview' in js and 'initMarkdownPreview();' in js
-    assert 'body.previewing .view-full' in css and 'body.previewing .nav-label' in css
+    assert '.file-card.previewing .view-full' in css and 'body.previewing .nav-label' in css
 
 
 # ── Loading a text file into the editor ───────────────────────────────────────
@@ -1709,11 +1712,11 @@ def test_preview_markup_is_in_the_script_and_stylesheet():
 def test_editor_page_offers_loading_a_file(client):
     html = client.get('/').get_data(as_text=True)
     assert f'data-max-bytes="{papyrus.MAX_PASTE_BYTES}"' in html           # the browser checks the same limit
-    assert 'drop a text file' in re.search(r'placeholder="([^"]*)"\s*spellcheck|placeholder="(Paste[^"]*)"', html).group(0)
-    assert re.search(r'<input type="file" id="openFile" hidden[^>]*>', html) and 'multiple' not in html.split('id="openFile"')[1].split('>')[0]
-    assert '<button type="button" id="openFileBtn" class="link-btn">open a file</button>' in html
+    assert 'drop a text file' in re.search(r'placeholder="(Paste[^"]*)"', html).group(0)
+    assert re.search(r'<input type="file" id="openFile" multiple hidden[^>]*>', html)
+    assert '<button type="button" id="openFileBtn" class="link-btn">open files</button>' in html
     assert '<span id="fileNote" class="file-note" role="status" aria-live="polite">' in html
-    assert 'Drop a text file on the page' in html
+    assert 'Drop text files on the page' in html
 
 
 def test_file_loading_is_client_side_and_text_only():
@@ -1723,7 +1726,7 @@ def test_file_loading_is_client_side_and_text_only():
     assert "indexOf('\\u0000')" in js and 'file.size > maxBytes' in js and "execCommand('insertText'" in js
     assert 'FormData' not in js and "'/upload" not in js               # the file itself is never sent anywhere
     css = open(os.path.join(root, 'static', 'css', 'style.css'), encoding='utf-8').read()
-    assert '.full-editor.drop-target' in css and '.file-note.error' in css
+    assert '.file-editors.drop-target .full-editor' in css and '.file-note.error' in css
 
 
 # ── Version ───────────────────────────────────────────────────────────────────
@@ -1777,3 +1780,67 @@ def test_one_time_notice_parameters_are_removed_from_the_address_bar():
     js = open(os.path.join(os.path.dirname(papyrus.__file__), 'static', 'js', 'paste_view.js'), encoding='utf-8').read()
     assert "['created', 'reported']" in js and 'history.replaceState' in js
     assert js.index('tidyAddressBar();') < js.index('initMarkdownPreview();')      # before anything reads the URL
+
+
+# ── Several files in one paste ────────────────────────────────────────────────
+
+def multi(client, files, **extra):
+    r = client.post('/create', json={'files': files, **extra})
+    assert r.status_code == 200, r.get_json()
+    return r.get_json()['paste_id']
+
+
+def test_a_paste_can_hold_several_files(client):
+    pid = multi(client, [{'filename': 'a.py', 'content': 'print(1)\n'}, {'filename': 'b.sh', 'content': 'echo hi\n'},
+                         {'content': 'plain'}], title='Three')
+    rows = db().execute('SELECT position, filename, language FROM files WHERE paste_id=? ORDER BY position', (pid,)).fetchall()
+    assert [tuple(r) for r in rows] == [(0, 'a.py', 'python'), (1, 'b.sh', 'bash'), (2, 'file-3', papyrus._pastes.get('default_language', 'text'))]
+    assert client.get(f'/raw/{pid}').get_data(as_text=True) == 'print(1)\n'                 # the first file
+    assert client.get(f'/raw/{pid}/b.sh').get_data(as_text=True) == 'echo hi\n'
+    assert client.get(f'/raw/{pid}/nope.txt').status_code == 404
+    html = client.get(f'/{pid}').get_data(as_text=True)
+    assert html.count('class="file-card') == 3 and '3 files' in html.split('</nav>')[0]
+    assert 'print(1)' in html and 'echo hi' in html and 'class="file-head"' in html
+
+
+def test_duplicate_names_are_numbered_and_the_title_falls_back_to_the_first_name(client):
+    pid = multi(client, [{'filename': 'a.py', 'content': 'x'}, {'filename': 'a.py', 'content': 'y'}])
+    names = [r[0] for r in db().execute('SELECT filename FROM files WHERE paste_id=? ORDER BY position', (pid,))]
+    assert names == ['a.py', 'a-2.py'] and stored(pid)['title'] == 'a.py'
+    assert client.get(f'/raw/{pid}/a-2.py').get_data(as_text=True) == 'y'
+
+
+def test_file_count_limits_and_errors_name_the_file(client, monkeypatch):
+    monkeypatch.setattr(papyrus, 'MAX_FILES', 2)
+    assert client.post('/create', json={'files': [{'content': 'a'}] * 3}).status_code == 413
+    assert client.post('/create', json={'files': []}).status_code == 400
+    r = client.post('/create', json={'files': [{'filename': 'ok.txt', 'content': 'a'}, {'filename': 'e.txt', 'content': '  '}]})
+    assert r.status_code == 400 and 'File 2 (e.txt)' in r.get_json()['error']
+    monkeypatch.setattr(papyrus, 'MAX_PASTE_BYTES', 10)
+    assert client.post('/create', json={'files': [{'content': 'x' * 6}, {'content': 'y' * 6}]}).status_code == 413   # the total counts
+
+
+def test_a_one_file_paste_looks_as_before(client):
+    html = client.get('/' + multi(client, [{'filename': 'a.py', 'content': 'x'}])).get_data(as_text=True)
+    assert 'class="file-head"' not in html and 'python &middot; 1 line' in html.split('</nav>')[0]
+
+
+def test_curl_takes_repeated_files(client):
+    r = client.post('/curl', data={'raw': ['one', 'two'], 'filename': ['a.txt', 'b.txt']}, content_type='multipart/form-data')
+    text = r.get_data(as_text=True)
+    assert r.status_code == 200 and 'Raw URL (a.txt)' in text and 'Raw URL (b.txt)' in text and 'Removal URL' in text
+    pid = re.search(r'Paste URL\s*:?\s*\S+/([0-9a-f]+)', text).group(1)
+    assert client.get(f'/raw/{pid}/b.txt').get_data(as_text=True) == 'two'
+
+
+def test_removing_a_multi_file_paste_removes_every_file(client):
+    made = client.post('/create', json={'files': [{'content': 'a'}, {'content': 'b'}]}).get_json()
+    client.get(f"/remove/{made['removal_token']}")
+    assert db().execute('SELECT COUNT(*) FROM files').fetchone()[0] == 0
+
+
+def test_the_markdown_preview_works_per_file(client):
+    pid = multi(client, [{'filename': 'a.txt', 'content': 'x'}, {'filename': 'R.md', 'content': '# Hi'}])
+    html = client.get(f'/{pid}?view=preview').get_data(as_text=True)
+    assert html.count('data-role="preview"') == 1 and '<h1>Hi</h1>' in html
+    assert html.count('class="file-card previewing"') == 1

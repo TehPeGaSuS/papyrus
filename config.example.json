@@ -23,6 +23,7 @@
   "pastes": {
     "max_size_bytes": 2097152,
     "id_length": 12,
+    "max_files": 10,
     "recent_limit": 50,
     "default_language": "text",
     "default_expiry": "1week",

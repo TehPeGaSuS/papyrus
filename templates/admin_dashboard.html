@@ -78,7 +78,7 @@
             <tbody>
                 {% for paste in pastes %}
                 <tr>
-                    <td><a href="{{ url_for('view_paste', paste_id=paste.id) }}" target="_blank">{{ paste.title }}</a> <small><code>{{ paste.id }}</code> &middot; {{ paste.language }}</small></td>
+                    <td><a href="{{ url_for('view_paste', paste_id=paste.id) }}" target="_blank">{{ paste.title }}</a> <small><code>{{ paste.id }}</code> &middot; {{ paste.language }}{% if paste.file_count > 1 %} &middot; {{ paste.file_count }} files{% endif %}</small></td>
                     <td>{{ paste.created_at }}</td>
                     <td>{{ paste.expires_at or 'Never' }}</td>
                     <td>{{ paste.views }}</td>

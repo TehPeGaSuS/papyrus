@@ -173,7 +173,7 @@ document.addEventListener('keydown', function (e) {
     if (window.PBCFG?.features?.keyboard_shortcuts === false) return;
 
     if ((e.ctrlKey || e.metaKey) && e.key === 'k') {
-        const textarea = document.getElementById('content');
+        const textarea = document.querySelector('.f-content');
         if (textarea) { e.preventDefault(); textarea.focus(); }
     }
 });
