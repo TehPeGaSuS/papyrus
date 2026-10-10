@@ -1871,5 +1871,7 @@ def test_the_api_examples_really_work(client):
     assert r.status_code == 200 and set(r.get_json()) == {'paste_id', 'url', 'removal_token', 'removal_url'}
 
 
-def test_the_editor_links_to_the_api_page(client):
-    assert 'href="/api"' in client.get('/').get_data(as_text=True)
+def test_the_editor_has_an_api_button_before_the_theme_controls(client):
+    top = client.get('/').get_data(as_text=True).split('</nav>')[0]
+    assert top.index('id="title"') < top.index('href="/api"') < top.index('id="themeToggle"')
+    assert '>API<' in top
