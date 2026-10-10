@@ -2286,3 +2286,9 @@ def test_the_api_page_uses_the_full_width_like_the_other_pages(client):
     css = open(os.path.join(os.path.dirname(papyrus.__file__), 'static', 'css', 'style.css'), encoding='utf-8').read()
     rule = re.search(r'\.api-page \{([^}]*)\}', css).group(1)
     assert 'max-width' not in rule and 'margin: 0 auto' not in rule              # no narrow centred column
+
+
+def test_api_page_tables_span_the_page_and_do_not_wrap_for_nothing():
+    css = open(os.path.join(os.path.dirname(papyrus.__file__), 'static', 'css', 'style.css'), encoding='utf-8').read()
+    assert re.search(r'\.api-page table \{ width: 100%; \}', css)
+    assert re.search(r'\.api-page td:first-child, \.api-page th:first-child \{ width: 1%; white-space: nowrap; \}', css)

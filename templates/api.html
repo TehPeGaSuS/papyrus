@@ -29,7 +29,7 @@
     <h3>Form fields</h3>
     <table>
         <tr><th>Field</th><th>Meaning</th></tr>
-        <tr><td><code>file</code></td><td>a file upload (<code>-F 'file=@name'</code>, or <code>@-</code> for standard input); repeat it for more files. The name is kept and its extension picks the language; piped text takes a name with <code>;filename=</code>. UTF-8 text only</td></tr>
+        <tr><td><code>file</code></td><td>a file upload: <code>-F 'file=@name'</code>, or <code>@-</code> for standard input. Repeat it for more files. UTF-8 text only</td></tr>
         <tr><td><code>title</code></td><td>optional description</td></tr>
         <tr><td><code>language</code></td><td>optional (repeat it, in order, for several files); <code>auto</code> or omitted means "from the filename". Names: <a href="{{ url_for('get_languages') }}"><code>/api/languages</code></a></td></tr>
         <tr><td><code>expires_in</code></td><td>optional, one of the values below (default <code>{{ default_expiry }}</code>)</td></tr>

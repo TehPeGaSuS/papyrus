@@ -725,6 +725,10 @@ a.comment-reply:hover { text-decoration: underline; color: var(--primary); }
 .api-page p, .api-page ul, .api-page table, .api-page pre { margin-bottom: 0.8rem; }
 .api-code { overflow-x: auto; white-space: pre; }
 .api-page td, .api-page th { vertical-align: top; }
+/* Every table spans the page and its first column shrinks to its content, so text wraps only when it has to. */
+.api-page table { width: 100%; }
+.api-page th { text-align: left; }
+.api-page td:first-child, .api-page th:first-child { width: 1%; white-space: nowrap; }
 
 /* ── Admin: blocked addresses ─────────────────────────────────────────────── */
 .block-form { display: flex; flex-wrap: wrap; gap: 0.5rem; margin: 0.5rem 0 1rem; }
