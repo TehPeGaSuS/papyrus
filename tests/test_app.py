@@ -1757,3 +1757,9 @@ def test_running_the_script_with_version_does_not_start_a_server():
     run = subprocess.run([sys.executable, os.path.join(root, 'app.py'), '--version'], cwd=root, capture_output=True,
                          text=True, timeout=60, env={**os.environ, 'SECRET_KEY': 'test-secret-key-not-for-production'})
     assert run.returncode == 0 and run.stdout.strip() == 'Papyrus 1.0.0', (run.stdout, run.stderr)
+
+
+def test_one_time_notice_parameters_are_removed_from_the_address_bar():
+    js = open(os.path.join(os.path.dirname(papyrus.__file__), 'static', 'js', 'paste_view.js'), encoding='utf-8').read()
+    assert "['created', 'reported']" in js and 'history.replaceState' in js
+    assert js.index('tidyAddressBar();') < js.index('initMarkdownPreview();')      # before anything reads the URL

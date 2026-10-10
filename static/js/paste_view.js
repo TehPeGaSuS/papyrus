@@ -11,9 +11,20 @@ document.addEventListener('DOMContentLoaded', () => {
     initLineNumbers();
     initWordWrap();
     initDiscussions();
+    tidyAddressBar();
     initRemovalLink();
     initMarkdownPreview();
 });
+
+// ?created=1 and ?reported=1 only tell the server to show a one-time notice. Once the page has it, take them
+// out of the address bar, so the URL people copy and share is just /<id> (a refresh shows no notice again).
+function tidyAddressBar() {
+    const url = new URL(window.location.href);
+    const had = ['created', 'reported'].filter(name => url.searchParams.has(name));
+    if (!had.length) return;
+    had.forEach(name => url.searchParams.delete(name));
+    history.replaceState(null, '', url.pathname + url.search + url.hash);
+}
 
 function pasteMeta() {
     return document.getElementById('viewFull').dataset;
