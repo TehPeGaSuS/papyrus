@@ -44,7 +44,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
 function initialiseTheme() {
     const saved         = localStorage.getItem('theme');
-    const configDefault = window.PBCFG?.theme?.default || 'auto';
+    const configDefault = document.documentElement.dataset.themeDefault || 'dark';   // theme.default, set by the server
     let theme;
 
     if (saved === 'light' || saved === 'dark') {
@@ -60,9 +60,9 @@ function initialiseTheme() {
 
     applyTheme(theme);
 
-    // Live OS theme changes (only when user hasn't pinned a preference)
+    // Live OS theme changes: only for "auto", and only when the visitor hasn't picked a mode
     window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', function (e) {
-        if (!localStorage.getItem('theme')) {
+        if (configDefault === 'auto' && !localStorage.getItem('theme')) {
             applyTheme(e.matches ? 'dark' : 'light');
         }
     });

@@ -153,7 +153,7 @@ body {
     min-height: 0;
 }
 
-/* On the view page, override to allow the discussions to extend below */
+/* On the view page, override to allow the comments to extend below */
 .full-page.view-page {
     overflow: visible;
     overflow-y: auto;
@@ -380,17 +380,17 @@ pre[class*="language-"], code[class*="language-"] {
 
 .table-responsive { overflow-x: auto; }
 
-/* ── Discussions panel ────────────────────────────────────────────────── */
-.discussions-panel {
+/* ── Comments panel ────────────────────────────────────────────────── */
+.comments-panel {
     flex-direction: column;
     border-top: 2px solid var(--border);
     background: var(--surface);
     /* no max-height — extends the page naturally */
 }
-.discussions-panel.collapsed .discussions-body {
+.comments-panel.collapsed .comments-body {
     display: none;
 }
-.discussions-header {
+.comments-header {
     display: flex;
     align-items: center;
     justify-content: space-between;
@@ -406,10 +406,10 @@ pre[class*="language-"], code[class*="language-"] {
     background: var(--surface);
     z-index: 5;
 }
-.discussions-header:hover { background: var(--bg); }
-.discussions-title { font-weight: 600; }
-.discussions-chevron { font-size: 0.7rem; color: var(--text-muted); }
-.discussions-body {
+.comments-header:hover { background: var(--bg); }
+.comments-title { font-weight: 600; }
+.comments-chevron { font-size: 0.7rem; color: var(--text-muted); }
+.comments-body {
     padding: 0.5rem 0;
 }
 .comments-list {
@@ -481,7 +481,7 @@ pre[class*="language-"], code[class*="language-"] {
 .comment-input:focus { border-color: var(--primary); }
 
 /* ── Markdown comments ────────────────────────────────────────────────── */
-.discussions-panel { display: flex; }
+.comments-panel { display: flex; }
 .comment-content.markdown-body { white-space: normal; line-height: 1.55; }
 .markdown-body > :first-child { margin-top: 0; }
 .markdown-body > :last-child  { margin-bottom: 0; }
@@ -555,7 +555,7 @@ pre[class*="language-"], code[class*="language-"] {
     .comment-box { padding: 0.5rem 0.7rem; }
 }
 
-/* Keep a linked comment (#c-<id>) clear of the sticky "Discussions" header */
+/* Keep a linked comment (#c-<id>) clear of the sticky "Comments" header */
 .comment-item { scroll-margin-top: 5rem; }
 
 /* ── Reports ──────────────────────────────────────────────────────────── */

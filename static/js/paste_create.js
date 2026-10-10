@@ -75,17 +75,18 @@ document.addEventListener('DOMContentLoaded', function () {
         })
         .catch(() => {});
 
-    // ── Expiry and discussion preferences (for the whole paste) ──────────────
+    // ── Expiry and comment preferences (for the whole paste) ──────────────
     const expirySelect = $('expires_in');
     const savedExpiry  = store.get('preferred_expiry');
     // Only reuse a saved choice the site still offers (the options are configurable).
     if (savedExpiry && Array.from(expirySelect.options).some(o => o.value === savedExpiry)) expirySelect.value = savedExpiry;
     expirySelect.addEventListener('change', () => store.set('preferred_expiry', expirySelect.value));
 
-    const discussCheck = $('allowDiscussions');
-    if (discussCheck) {
-        discussCheck.checked = store.get('preferred_discussions') === 'true';
-        discussCheck.addEventListener('change', () => store.set('preferred_discussions', discussCheck.checked));
+    const commentsCheck = $('allowComments');
+    if (commentsCheck) {
+        const saved = store.get('preferred_comments');     // your last choice here, else the site's default
+        commentsCheck.checked = saved === null ? commentsCheck.dataset.default === '1' : saved === 'true';
+        commentsCheck.addEventListener('change', () => store.set('preferred_comments', commentsCheck.checked));
     }
 
     // ── One file card: editor options, indenting ─────────────────────────────
@@ -393,7 +394,7 @@ document.addEventListener('DOMContentLoaded', function () {
                         return { filename: p.name.value.trim(), content: p.text.value, language: p.lang.value || 'auto' };   // "auto": from the filename
                     }),
                     expires_in:  expirySelect.value,
-                    discussions: discussCheck ? discussCheck.checked : false,
+                    comments: commentsCheck ? commentsCheck.checked : false,       // (no checkbox: the site has comments off)
                 }),
             });
             const result = await resp.json();

@@ -56,9 +56,11 @@
             {% endfor %}
         </select>
     </label>
+    {% if comments_enabled %}
     <label class="bar-field" title="Let visitors comment on and reply to this paste">
-        <input type="checkbox" id="allowDiscussions"> Allow comments
+        <input type="checkbox" id="allowComments" data-default="{{ 1 if comments_default else 0 }}"> Allow comments
     </label>
+    {% endif %}
     <button id="clearBtn" class="nav-btn" type="button">Clear</button>
     <button id="submitBtn" class="nav-btn nav-btn-save" type="button">Save</button>
 </div>

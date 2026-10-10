@@ -11,7 +11,7 @@ document.addEventListener('DOMContentLoaded', () => {
     initLineHighlight(); // register Prism hook before initLineNumbers triggers Prism
     initLineNumbers();
     initWordWrap();
-    initDiscussions();
+    initComments();
     tidyAddressBar();
     initRemovalLink();
     initMarkdownPreview();
@@ -252,16 +252,16 @@ function initWordWrap() {
     });
 }
 
-function initDiscussions() {
-    const panel = document.getElementById('discussionsPanel');
+function initComments() {
+    const panel = document.getElementById('commentsPanel');
     if (!panel) return;
 
     // Collapse / expand via header click
-    const header = document.getElementById('discussionsToggle');
+    const header = document.getElementById('commentsToggle');
     if (header) {
         header.addEventListener('click', () => {
             panel.classList.toggle('collapsed');
-            const chevron = document.getElementById('discussionsChevron');
+            const chevron = document.getElementById('commentsChevron');
             if (chevron) chevron.textContent = panel.classList.contains('collapsed') ? '\u25B2' : '\u25BC';
         });
     }

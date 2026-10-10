@@ -1,4 +1,4 @@
-"""Papyrus: a self-hosted pastebin with threaded Markdown discussions.
+"""Papyrus: a self-hosted pastebin with threaded Markdown comments.
 
     python3 app.py            run the server (the first run sets itself up)
     python3 app.py -d         run it in the background; stop / restart / status manage it
@@ -218,7 +218,7 @@ _CONTROL_CHARS_RE   = re.compile(r'[\x00-\x08\x0b-\x1f\x7f]')
 
 # Reject oversized request bodies before they are read into memory.
 app.config['MAX_CONTENT_LENGTH'] = MAX_PASTE_BYTES + 64 * 1024
-# Werkzeug caps non-file form fields at 500 kB by default; `curl -F 'raw=<-'` sends the paste as one.
+# Werkzeug caps non-file form fields at 500 kB by default; the limit also covers the form's other fields.
 app.config['MAX_FORM_MEMORY_SIZE'] = MAX_PASTE_BYTES + 64 * 1024
 
 # ── Security headers ─────────────────────────────────────────────────────────
@@ -312,6 +312,7 @@ def inject_config():
     return {'cfg': CFG, 'csp_nonce': getattr(g, 'csp_nonce', ''),
             'reports_enabled': _reports_enabled(), 'is_admin': is_admin(),
             'palettes': _PALETTES, 'default_palette': _DEFAULT_PALETTE, 'theme_css_version': _THEME_CSS_VERSION,
+            'theme_default': _THEME_DEFAULT,
             'site_notice': _SITE_NOTICE, 'site_footer': _SITE_FOOTER, 'source_url': SOURCE_URL,
             'version': __version__}
 
@@ -353,7 +354,7 @@ def _create_tables(conn):
             expires_at          TEXT,
             views               INTEGER DEFAULT 0,
             removal_hash        TEXT NOT NULL DEFAULT '',   -- sha256 of the removal token, never the token
-            discussions_enabled INTEGER DEFAULT 0,
+            comments_enabled INTEGER DEFAULT 0,
             creator_ip          TEXT NOT NULL DEFAULT ''    -- only when pastes.store_ips is on; goes with the paste
         )
     ''')
@@ -418,7 +419,7 @@ def _hash_token(token):
 def _new_removal_token():
     return secrets.token_urlsafe(24)
 
-SCHEMA_VERSION = 3   # stored in the database (PRAGMA user_version); bump it when the layout changes
+SCHEMA_VERSION = 4   # stored in the database (PRAGMA user_version); bump it when the layout changes
 
 def _migrate_2_to_3(conn):
     """2 -> 3: the creator's address (kept only when pastes.store_ips is on) and the blocklist."""
@@ -426,6 +427,12 @@ def _migrate_2_to_3(conn):
         columns = [r[1] for r in conn.execute(f'PRAGMA table_info({table})')]
         if 'creator_ip' not in columns:
             conn.execute(f"ALTER TABLE {table} ADD COLUMN creator_ip TEXT NOT NULL DEFAULT ''")
+
+def _migrate_3_to_4(conn):
+    """3 -> 4: "discussions" became "comments" everywhere, including the column that says a paste takes them."""
+    columns = [r[1] for r in conn.execute('PRAGMA table_info(pastes)')]
+    if 'discussions_enabled' in columns:
+        conn.execute('ALTER TABLE pastes RENAME COLUMN discussions_enabled TO comments_enabled')
 
 def init_db():
     """Initialise the database. Thread-safe and idempotent: runs DDL only once per process."""
@@ -438,9 +445,14 @@ def init_db():
             with conn:
                 existing = conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='pastes'").fetchone()
                 version = conn.execute('PRAGMA user_version').fetchone()[0]
-                if existing and version == 2:
-                    _migrate_2_to_3(conn)                    # released layout: upgrade in place, keep the data
-                elif existing and version != SCHEMA_VERSION:
+                if existing:
+                    if version == 2:                          # released layouts: upgrade in place, keep the data
+                        _migrate_2_to_3(conn)
+                        version = 3
+                    if version == 3:
+                        _migrate_3_to_4(conn)
+                        version = 4
+                if existing and version != SCHEMA_VERSION:
                     raise RuntimeError(
                         f'{DATABASE} was created by an earlier development version of Papyrus and its layout '
                         f'is out of date. There is no migration: delete or move that file and Papyrus will '
@@ -541,6 +553,8 @@ def _resolve_client_ip(peer, forwarded_for):
 # paste and comment, which makes "block this author" one click; without it, addresses are typed in by hand.
 
 _STORE_IPS = bool(_pastes.get('store_ips', False))
+_COMMENTS_ENABLED = bool(_feat.get('comments', True))              # features.comments: false turns comments off site-wide
+_COMMENTS_DEFAULT = bool(_pastes.get('comments_default', False))   # pastes.comments_default: do new pastes take comments?
 _BLOCKED_MESSAGE = 'Your address is blocked from posting here.'
 _BLOCK_DURATIONS = {'1day': ('1 day', 86400), '1week': ('1 week', 7 * 86400),
                     '1month': ('1 month', 30 * 86400), 'never': ('until removed', None)}
@@ -883,6 +897,16 @@ def _build_theme_css(palettes):
     return '\n'.join(blocks) + '\n'
 
 _PALETTES, _DEFAULT_PALETTE = _load_palettes(_theme)
+
+def _load_theme_default(value):
+    """theme.default: the mode new visitors get: 'dark' (the default), 'light', or 'auto' (follow their system)."""
+    if value is None:
+        return 'dark'
+    if value not in ('dark', 'light', 'auto'):
+        raise RuntimeError(f"theme.default must be \"dark\", \"light\" or \"auto\", not {value!r}.")
+    return value
+
+_THEME_DEFAULT = _load_theme_default(_theme.get('default'))
 _THEME_CSS = _build_theme_css(_PALETTES)
 _THEME_CSS_VERSION = hashlib.sha256(_THEME_CSS.encode()).hexdigest()[:10]
 
@@ -919,9 +943,10 @@ def _prism_language(language):
 @app.route('/', methods=['GET', 'POST'])
 def index():
     if request.method == 'POST':               # curl -F 'file=@deploy.sh' https://host/
-        return create_paste_curl()
+        return create_paste_upload()
     return render_template('index.html', language_hints=_language_hints(), max_paste_bytes=MAX_PASTE_BYTES,
-                           expiry_options=_EXPIRY_OPTIONS, default_expiry=_DEFAULT_EXPIRY, max_files=MAX_FILES)
+                           expiry_options=_EXPIRY_OPTIONS, default_expiry=_DEFAULT_EXPIRY, max_files=MAX_FILES,
+                           comments_enabled=_COMMENTS_ENABLED, comments_default=_COMMENTS_DEFAULT)
 
 @app.route('/theme.css')
 def theme_css():
@@ -1001,7 +1026,8 @@ def _store_paste(data, ip=''):
     if not (isinstance(raw_title, str) and raw_title.strip()):
         first = files[0]['filename'] if files[0]['named'] else ''
         title = first or 'Untitled'                   # no description given: show the first filename
-    discussions = bool(data.get('discussions', False))
+    wanted = data.get('comments')                      # not given: the site's default
+    comments = _COMMENTS_ENABLED and (_COMMENTS_DEFAULT if wanted is None else _flag(wanted))
     expiry = _expiry_option(data.get('expires_in'))
     if expiry is None:
         raise _PasteError(f"Unknown expiry {str(data.get('expires_in'))[:40]!r}. Use one of: "
@@ -1014,9 +1040,9 @@ def _store_paste(data, ip=''):
             paste_id = generate_paste_id()
             try:
                 conn.execute(
-                    'INSERT INTO pastes (id, title, expires_at, removal_hash, discussions_enabled, creator_ip)'
+                    'INSERT INTO pastes (id, title, expires_at, removal_hash, comments_enabled, creator_ip)'
                     ' VALUES (?, ?, ?, ?, ?, ?)',
-                    (paste_id, title, expires_at, _hash_token(token), int(discussions), ip if _STORE_IPS else ''))
+                    (paste_id, title, expires_at, _hash_token(token), int(comments), ip if _STORE_IPS else ''))
             except sqlite3.IntegrityError:
                 continue
             conn.executemany(
@@ -1058,35 +1084,28 @@ def _set_removal_cookie(response, paste_id, token, expires_at):
 def _flag(value):
     return value in (True, 1, '1', 'true', 'yes', 'on')
 
+def _flag_or_none(value):
+    return None if value is None else _flag(value)
+
 @app.route('/create', methods=['POST'])
 def create_paste():
-    """The web UI posts JSON; `curl --data-binary @file 'https://host/create?filename=x.py'` posts text."""
-    plain_text = request.mimetype == 'text/plain'
+    """The web page posts JSON here: a paste is {content, ...} or {files: [{content, filename, language}], ...},
+    with optional title, expires_in and comments. From a terminal, upload with `curl -F 'file=@x' https://host/`."""
     def fail(message, status):
-        return _text_response(message + '\n', status) if plain_text else (jsonify({'error': message}), status)
+        return jsonify({'error': message}), status
 
     if _is_blocked(_client_ip()):
         return fail(_BLOCKED_MESSAGE, 403)
     # 10 pastes per 10 minutes per IP address (SQLite backed for worker safety)
     if not _check_rate_limit(_client_ip(), key_prefix='create', limit=10):
         return fail('Rate limit exceeded. Please wait a few minutes.', 429)
-    if plain_text:
-        try:
-            body = request.get_data().decode('utf-8')   # strict: binary files are not text
-        except UnicodeDecodeError:
-            return fail('Only UTF-8 text is accepted', 415)
-        data = {'content': body, **{k: request.args.get(k) for k in ('title', 'filename', 'language', 'expires_in')},
-                'discussions': _flag(request.args.get('discussions'))}
-    else:
-        data = request.get_json(silent=True)
-        if not isinstance(data, dict):
-            return fail('JSON body required', 400)
+    data = request.get_json(silent=True)
+    if not isinstance(data, dict):
+        return fail('JSON body required', 400)
     try:
         paste_id, token, expires_at, files = _store_paste(data, _client_ip())
     except _PasteError as e:
         return fail(e.message, e.status)
-    if plain_text:
-        return _text_response(_creation_summary(paste_id, token, files))
     response = jsonify({'paste_id': paste_id, 'url': f'/{paste_id}',
                         'removal_token': token, 'removal_url': f'/remove/{token}'})
     _set_removal_cookie(response, paste_id, token, expires_at)
@@ -1094,26 +1113,22 @@ def create_paste():
 
 @app.route('/api')
 def api_docs():
-    """How to post pastes from scripts: curl, plain text, JSON. The examples use this site's own address."""
+    """How to post pastes from scripts: curl uploads and JSON. The examples use this site's own address."""
     return render_template('api.html', base=url_for('index', _external=True).rstrip('/'), max_files=MAX_FILES,
                            max_bytes=MAX_PASTE_BYTES, max_size=_human_size(MAX_PASTE_BYTES),
                            expiries=_EXPIRY_OPTIONS, default_expiry=_DEFAULT_EXPIRY,
                            example_expiry=next((o['value'] for o in _EXPIRY_OPTIONS if o['value'] != _DEFAULT_EXPIRY), _DEFAULT_EXPIRY))
 
-@app.route('/curl', methods=['POST'])
-def create_paste_curl():
-    """`echo hi | curl -F 'file=@-' https://host/` (also POST /curl): files are uploads in `file` fields, or text
-    in `raw` fields, plus optional filename, title, language, expires_in and discussions. Prints the paste,
-    raw and removal URLs."""
+def create_paste_upload():
+    """`echo hi | curl -F 'file=@-' https://host/`: every `file` field is a file of the paste, with optional
+    title, language, expires_in and comments fields. Prints the paste, raw and removal URLs."""
     if _is_blocked(_client_ip()):
         return _text_response(_BLOCKED_MESSAGE + '\n', 403)
     if not _check_rate_limit(_client_ip(), key_prefix='create', limit=10):
         return _text_response('Rate limit exceeded. Please wait a few minutes.\n', 429)
     form = request.form
-    raws, names, languages = form.getlist('raw'), form.getlist('filename'), form.getlist('language')
-    # Repeat the fields for more files: -F 'raw=<a.py' -F filename=a.py -F 'raw=<b.sh' -F filename=b.sh
-    files = [{'content': raw, 'filename': names[i] if i < len(names) else '',
-              'language': languages[i] if i < len(languages) else None} for i, raw in enumerate(raws)]
+    languages = form.getlist('language')
+    files = []
     for upload in request.files.getlist('file'):       # -F 'file=@a.py' -F 'file=@b.sh': one file each
         text = upload.stream.read(MAX_PASTE_BYTES + 1)
         if len(text) > MAX_PASTE_BYTES:
@@ -1122,15 +1137,14 @@ def create_paste_curl():
             text = text.decode('utf-8')
         except UnicodeDecodeError:
             return _text_response('Only UTF-8 text is accepted\n', 415)
-        index = len(files)
-        name = upload.filename if upload.filename not in (None, '', '-') else (names[index] if index < len(names) else '')
-        files.append({'content': text, 'filename': name,
-                      'language': languages[index] if index < len(languages) else None})
+        name = upload.filename if upload.filename != '-' else ''      # curl names standard input "-" (or nothing)
+        files.append({'content': text, 'filename': name or '',
+                      'language': languages[len(files)] if len(files) < len(languages) else None})
     if not files:
         return _text_response("Nothing to save. Send a file with -F 'file=@name', or pipe text in with "
-                              "-F 'file=@-' (or -F 'raw=<-').\n", 400)
+                              "-F 'file=@-'.\n", 400)
     data = {'files': files, 'content': None, 'title': form.get('title'),
-            'expires_in': form.get('expires_in'), 'discussions': _flag(form.get('discussions'))}
+            'expires_in': form.get('expires_in'), 'comments': _flag_or_none(form.get('comments'))}
     try:
         paste_id, token, _, stored = _store_paste(data, _client_ip())
     except _PasteError as e:
@@ -1173,7 +1187,7 @@ def view_paste(paste_id):
     with _db() as conn:
         if not is_admin():
             conn.execute('UPDATE pastes SET views = views + 1 WHERE id = ?', (paste_id,))
-        if paste['discussions_enabled']:
+        if _COMMENTS_ENABLED and paste['comments_enabled']:
             rows = conn.execute(
                 'SELECT id, parent_id, nick, content, created_at FROM comments WHERE paste_id = ?'
                 ' ORDER BY created_at ASC, rowid ASC', (paste_id,)).fetchall()
@@ -1197,6 +1211,7 @@ def view_paste(paste_id):
     return render_template('view.html', paste=paste, comments=_comment_tree(rows),
                            removal_token=cookie if owner else None,
                            comment_count=len(rows), files=files,
+                           comments_on=_COMMENTS_ENABLED and bool(paste['comments_enabled']),
                            show_preview=request.args.get('view') == 'preview',
                            highlight_file=int(highlight) if highlight.isdigit() and 0 < int(highlight) <= len(files) else 1)
 
@@ -1226,7 +1241,7 @@ def get_client_config():
             'tagline':     _site.get('tagline', ''),
         },
         'theme': {
-            'default':          _theme.get('default', 'auto'),
+            'default':          _THEME_DEFAULT,
             'allow_user_toggle': _theme.get('allow_user_toggle', True),
             'palette':          _DEFAULT_PALETTE,
             'palettes':         [{'value': p['value'], 'label': p['label']} for p in _PALETTES],
@@ -1304,8 +1319,10 @@ def post_comment(paste_id):
     paste = _get_paste_or_abort(paste_id)
     if not _is_same_origin():
         abort(403, 'Cross-origin request blocked.')
-    if not paste['discussions_enabled']:
-        abort(403, 'Discussions are not enabled for this paste.')
+    if not _COMMENTS_ENABLED:
+        abort(403, 'Comments are turned off on this site.')
+    if not paste['comments_enabled']:
+        abort(403, 'Comments are not enabled for this paste.')
     if _is_blocked(_client_ip()):
         abort(403, _BLOCKED_MESSAGE)
     if not _check_rate_limit(_client_ip(), key_prefix='comment', window=600, limit=20):
@@ -1522,7 +1539,7 @@ def admin_delete_comment(comment_id):
             _delete_comment(conn, comment_id)
             conn.commit()
     if row and request.form.get('return') == 'paste':
-        return redirect(url_for('view_paste', paste_id=row['paste_id']) + '#discussionsPanel')
+        return redirect(url_for('view_paste', paste_id=row['paste_id']) + '#commentsPanel')
     return redirect(url_for('admin_dashboard'))
 
 @app.route('/admin/delete/<string:paste_id>', methods=['POST'])

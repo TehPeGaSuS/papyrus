@@ -87,13 +87,13 @@
     </section>
     {% endfor %}
 </div>
-{% if paste.discussions_enabled %}
-<div id="discussionsPanel" class="discussions-panel">
-    <div class="discussions-header" id="discussionsToggle">
-        <span class="discussions-title">&#x1F4AC; Discussions (<span id="discussionsCount">{{ comment_count }}</span>)</span>
-        <span class="discussions-chevron" id="discussionsChevron">&#x25BC;</span>
+{% if comments_on %}
+<div id="commentsPanel" class="comments-panel">
+    <div class="comments-header" id="commentsToggle">
+        <span class="comments-title">&#x1F4AC; Comments (<span id="commentsCount">{{ comment_count }}</span>)</span>
+        <span class="comments-chevron" id="commentsChevron">&#x25BC;</span>
     </div>
-    <div class="discussions-body">
+    <div class="comments-body">
         <div id="commentsList" class="comments-list">
             {% for c in comments %}{{ comment_box(c) }}
             {% else %}

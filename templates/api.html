@@ -22,22 +22,16 @@
     <p>Send a file. Its name is kept, and its extension picks the syntax highlighting:</p>
     {{ code("$ curl -F 'file=@deploy.sh' " ~ base ~ "/") }}
     <p>Add a description, an expiry and comments. Name piped text with <code>;filename=</code>:</p>
-    {{ code("$ curl -F 'file=@deploy.sh' -F title='Deploy helper' -F expires_in=" ~ example_expiry ~ " -F discussions=1 " ~ base ~ "/\n$ echo '# Notes' | curl -F 'file=@-;filename=notes.md' " ~ base ~ "/") }}
-    <p>The older form still works too: <code>-F 'raw=&lt;file'</code> (the text as a field) to <code>/curl</code>, with <code>-F filename=…</code>.</p>
-    {{ code("$ curl -X POST " ~ base ~ "/curl -F 'raw=<deploy.sh' -F filename=deploy.sh") }}
-    <p>The same, sending the file as the request body (options go in the query string):</p>
-    {{ code("$ curl --data-binary @deploy.sh -H 'Content-Type: text/plain' \\\n       '" ~ base ~ "/create?filename=deploy.sh&title=Deploy+helper'") }}
+    {{ code("$ curl -F 'file=@deploy.sh' -F title='Deploy helper' -F expires_in=" ~ example_expiry ~ " -F comments=1 " ~ base ~ "/\n$ echo '# Notes' | curl -F 'file=@-;filename=notes.md' " ~ base ~ "/") }}
 
-    <h3>Form and query fields</h3>
+    <h3>Form fields</h3>
     <table>
         <tr><th>Field</th><th>Meaning</th></tr>
-        <tr><td><code>file</code></td><td>a file upload (<code>-F 'file=@name'</code>, or <code>@-</code> for standard input); repeat it for more files. UTF-8 text only</td></tr>
-        <tr><td><code>raw</code></td><td>the text itself, as a field (<code>-F 'raw=&lt;name'</code>), or the request body of <code>/create</code></td></tr>
-        <tr><td><code>filename</code></td><td>optional with <code>raw</code>; the extension picks the language and the paste is titled after it. Uploads bring their own name</td></tr>
+        <tr><td><code>file</code></td><td>a file upload (<code>-F 'file=@name'</code>, or <code>@-</code> for standard input); repeat it for more files. The name is kept and its extension picks the language; piped text takes a name with <code>;filename=</code>. UTF-8 text only</td></tr>
         <tr><td><code>title</code></td><td>optional description</td></tr>
-        <tr><td><code>language</code></td><td>optional; <code>auto</code> or omitted means "from the filename". Names: <a href="{{ url_for('get_languages') }}"><code>/api/languages</code></a></td></tr>
+        <tr><td><code>language</code></td><td>optional (repeat it, in order, for several files); <code>auto</code> or omitted means "from the filename". Names: <a href="{{ url_for('get_languages') }}"><code>/api/languages</code></a></td></tr>
         <tr><td><code>expires_in</code></td><td>optional, one of the values below (default <code>{{ default_expiry }}</code>)</td></tr>
-        <tr><td><code>discussions</code></td><td>optional, <code>1</code> lets visitors comment</td></tr>
+        <tr><td><code>comments</code></td><td>optional, <code>1</code> lets visitors comment, <code>0</code> doesn't; left out, the site's default applies (and a site can turn comments off entirely)</td></tr>
     </table>
 
     <h2>Several files in one paste</h2>
@@ -46,7 +40,7 @@
 
     <h2>JSON</h2>
     <p><code>POST /create</code> with <code>Content-Type: application/json</code>. One file:</p>
-    {{ code('{"content": "print(1)\\n", "filename": "hello.py", "title": "Hello", "expires_in": "' ~ example_expiry ~ '", "discussions": false}') }}
+    {{ code('{"content": "print(1)\\n", "filename": "hello.py", "title": "Hello", "expires_in": "' ~ example_expiry ~ '", "comments": false}') }}
     <p>Several files:</p>
     {{ code('{"title": "Project", "files": [\n  {"filename": "main.py",   "content": "print(1)\\n"},\n  {"filename": "README.md", "content": "# Hi"}\n]}') }}
     <p>The answer is JSON; <code>url</code> and <code>removal_url</code> are paths on this site:</p>

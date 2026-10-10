@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="en" data-palette="{{ default_palette }}">
+<html lang="en" data-palette="{{ default_palette }}" data-theme-default="{{ theme_default }}">
 
 <head>
     <meta charset="UTF-8">
@@ -10,7 +10,8 @@
         (function () {
             var root = document.documentElement, t = null, p = null;
             try { t = localStorage.getItem('theme'); p = localStorage.getItem('palette'); } catch (e) {}
-            if (t === 'dark' || (!t && window.matchMedia('(prefers-color-scheme: dark)').matches))
+            var d = root.getAttribute('data-theme-default');        // the site's default: dark, light or auto
+            if (t === 'dark' || (!t && (d === 'dark' || (d === 'auto' && window.matchMedia('(prefers-color-scheme: dark)').matches))))
                 root.setAttribute('data-theme', 'dark');
             if (p && {{ palettes|map(attribute='value')|list|tojson }}.indexOf(p) !== -1)
                 root.setAttribute('data-palette', p);

@@ -2,7 +2,7 @@
 
 # Papyrus
 
-A self-hosted pastebin with threaded Markdown discussions and an admin panel. One Python file,
+A self-hosted pastebin with threaded Markdown comments and an admin panel. One Python file,
 SQLite for storage, no build step.
 
 ## Features
@@ -23,7 +23,7 @@ SQLite for storage, no build step.
   never rendered
 - **Syntax highlighting** with Prism.js, line numbers, line-range links (`?L=5-12`), word wrap toggle
 - **Expiry**: pastes are temporary: 1 hour, 1 day, 1 week or 1 month, one week by default (configurable)
-- **Threaded discussions**: optional per-paste comments and nested replies, each in its own box,
+- **Threaded comments**: optional per-paste comments and nested replies, each in its own box,
   written in Markdown (code fences, tables, links) with a Write/Preview tab. Rendered and sanitised
   on the server
 - **Admin panel** at `/admin` to list and delete pastes and comments, and to work through reports. **View** opens
@@ -82,6 +82,11 @@ no `config.json`. Restart after changing it.
 - `server.secret_key`: signs the admin session. The `SECRET_KEY` environment variable overrides it
 - `pastes.expiries`: the expiry choices, see below. `pastes.default_expiry` names the one selected by default
 - `pastes.*`: also the size limit (for the whole paste), `max_files`, the default language and `recent_limit`
+- `features.comments`: set to `false` to turn comments off for the whole site (default `true`). The checkbox, the
+  comments panel and the comment form disappear and posting is refused; existing comments stay in the database
+- `pastes.comments_default`: whether new pastes take comments when nobody says (default `false`). It is the starting
+  state of the **Allow comments** checkbox for visitors who haven't chosen, and what `curl` and JSON posts get
+  without a `comments` field
 - `pastes.store_ips`: keep the author's address with each paste and comment (default `false`). Needed for the
   one-click **Block** buttons and to see addresses in the panel; the address is deleted together with the paste or
   comment. Leave it off and nothing but a keyed hash (for reports) ever records who posted; you can still block by
@@ -125,6 +130,9 @@ variant with the same ten colours; add your own by copying one:
 `logo_filter` (optional) is a CSS filter that recolours the logo, which ships in the default palette's colour.
 Colours are hex values; a mistake stops Papyrus at startup with a message saying which one. With a single
 palette the dropdown is hidden, and `theme.allow_user_toggle` switches the light/dark toggle off.
+
+`theme.default` is the mode visitors get before they choose one: `"dark"` (the shipped default), `"light"`, or `"auto"` to follow
+their system. It is rendered into the page, so there is no flash of the other mode, and the toggle remembers a visitor's choice.
 
 ### Expiry times
 
@@ -221,14 +229,12 @@ $ curl -F 'file=@file.py' https://host/                          # a file: its n
 $ curl -F 'file=@file.py' -F title=notes -F expires_in=1day https://host/
 $ curl -F 'file=@main.py' -F 'file=@README.md' https://host/     # several files, one paste
 $ echo '# Notes' | curl -F 'file=@-;filename=notes.md' https://host/
-$ curl --data-binary @file.py 'https://host/create?filename=file.py&title=notes'   # same output
 ```
 
 The address itself takes the POST, so there is no endpoint to remember and curl needs no `-X POST` with `-F`.
-Optional form fields: `title` (the description), `language`, `expires_in` and `discussions`. Uploads are UTF-8
-text only and keep their filename (the extension picks the syntax highlighting). The older form still works:
-`curl -X POST https://host/curl -F 'raw=<file.py' -F filename=file.py`, repeating `raw` and `filename` for several
-files. With several files the reply has one `Raw URL (<filename>)` line per file.
+Optional form fields: `title` (the description), `language`, `expires_in` and `comments`. Uploads are UTF-8
+text only and keep their filename (the extension picks the syntax highlighting; piped text takes a name with
+`;filename=`). With several files the reply has one `Raw URL (<filename>)` line per file.
 
 **Removing a paste.** The Removal URL is the only thing that removes it, so keep it. Opening it removes
 the paste at once (as in PrivateBin and pinnwand), so don't post it where a link-previewing bot would read it; from a
@@ -241,13 +247,13 @@ link is also shown once after saving, for removing the paste from another device
 
 - `GET /`: create-paste page
 - `GET /api`: a page on the site that explains the ways to post (curl, plain text, JSON), with this site's own address in the examples
-- `POST /` or `POST /curl`: create a paste from form fields: `file` uploads (repeat for more files) and/or `raw`
-  text, optional `filename`, `title`, `language`, `expires_in`, `discussions`; prints the paste, raw and removal URLs
-  as plain text
-- `POST /create`: the same from JSON (`content`, or `files`: a list of `{content, filename, language}` for several
-  files; optional `title` (the description), `filename`, `language`
-  (`auto` or omitted: detected from the filename), `expires_in`, `discussions`; answers with `paste_id`, `url`,
-  `removal_token`, `removal_url` and sets the owner cookie) or from a plain-text body (prints like `/curl`)
+- `POST /`: create a paste from a multipart form, the way `curl -F 'file=@name' https://host/` sends it: `file`
+  uploads (repeat for more files), optional `title`, `language`, `expires_in`, `comments`; prints the paste, raw and
+  removal URLs as plain text
+- `POST /create`: the same from JSON, which is what the web page uses (`content`, or `files`: a list of
+  `{content, filename, language}` for several files; optional `title` (the description), `filename`, `language`
+  (`auto` or omitted: detected from the filename), `expires_in`, `comments`; answers with `paste_id`, `url`,
+  `removal_token`, `removal_url` and sets the owner cookie)
 - `GET /<id>`: view a paste (`?view=preview` for a rendered Markdown paste); `GET /raw/<id>`: its (first) file as `text/plain`; `GET /raw/<id>/<filename>`: any file of it.
   `?f=2&L=5-12` highlights lines of the second file
 - `POST /<id>/comment`: add a comment (form fields `content`, optional `nick`, optional `parent`, the
@@ -274,7 +280,7 @@ CREATE TABLE pastes (
     expires_at TEXT,               -- ISO-8601 UTC, NULL = never
     views INTEGER DEFAULT 0,
     removal_hash TEXT NOT NULL DEFAULT '',   -- sha256 of the removal token, never the token itself
-    discussions_enabled INTEGER DEFAULT 0
+    comments_enabled INTEGER DEFAULT 0
 );
 CREATE TABLE files (
     paste_id TEXT NOT NULL, position INTEGER NOT NULL, filename TEXT NOT NULL DEFAULT '',

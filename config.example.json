@@ -3,7 +3,7 @@
 
   "site": {
     "name": "Papyrus",
-    "tagline": "Simple, fast pastes with Markdown discussions.",
+    "tagline": "Simple, fast pastes with Markdown comments.",
     "notice": "",
     "footer": "This website does not claim ownership of, copyright on, and assumes no liability for provided content.",
     "base_url": ""
@@ -25,6 +25,7 @@
     "id_length": 12,
     "max_files": 10,
     "store_ips": false,
+    "comments_default": false,
     "recent_limit": 50,
     "default_language": "text",
     "default_expiry": "1week",
@@ -37,7 +38,7 @@
   },
 
   "theme": {
-    "default": "auto",
+    "default": "dark",
     "allow_user_toggle": true,
     "palette": "rust",
     "palettes": {
@@ -187,6 +188,7 @@
   "features": {
     "show_recent": false,
     "reports": true,
+    "comments": true,
     "show_view_count": true,
     "allow_raw_api": true,
     "keyboard_shortcuts": true

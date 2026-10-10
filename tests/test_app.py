@@ -262,8 +262,7 @@ def test_oversized_paste_rejected(client, monkeypatch):
 
 
 def test_curl_style_create(client):
-    r = client.post('/create?title=notes&language=python&expires_in=1day',
-                    data='print(1)\n', content_type='text/plain')
+    r = upload(client, ('', 'print(1)\n'), title='notes', language='python', expires_in='1day')
     assert r.status_code == 200
     urls = curl_urls(r)
     pid = urls['Paste URL'].rsplit('/', 1)[1]
@@ -287,7 +286,7 @@ def comment_id(response):
 
 
 def test_comment_roundtrip_renders_markdown(client):
-    pid = create(client, discussions=True)['paste_id']
+    pid = create(client, comments=True)['paste_id']
     r = comment(client, pid, '**bold** and `code`\n\n```python\nprint(1)\n```', nick='ann')
     assert r.status_code == 303 and '#c-' in r.headers['Location']
     page = client.get(f'/{pid}').get_data(as_text=True)
@@ -298,7 +297,7 @@ def test_comment_roundtrip_renders_markdown(client):
 
 
 def test_comment_markdown_is_sanitised(client):
-    pid = create(client, discussions=True)['paste_id']
+    pid = create(client, comments=True)['paste_id']
     comment(client, pid, '<script>alert(1)</script>\n\n'
                          'inline <img src=x onerror=alert(2)> and <b onclick="y()">raw</b>\n\n'
                          '[x](javascript:alert(3)) ![pic](http://tracker.example/p.png)')
@@ -319,10 +318,10 @@ def test_render_markdown_code_class_is_restricted():
     assert '<b ' not in html
 
 
-def test_comment_requires_discussions_and_origin(client):
+def test_comment_requires_comments_and_origin(client):
     off = create(client)['paste_id']
     assert comment(client, off, 'hi').status_code == 403
-    on = create(client, discussions=True)['paste_id']
+    on = create(client, comments=True)['paste_id']
     assert comment(client, on, 'hi', origin={'Origin': 'http://evil.example'}).status_code == 403
     assert comment(client, on, 'hi', origin={}).status_code == 403
     assert comment(client, on, '   ').status_code == 400
@@ -330,7 +329,7 @@ def test_comment_requires_discussions_and_origin(client):
 
 
 def test_comment_limits(client, monkeypatch):
-    pid = create(client, discussions=True)['paste_id']
+    pid = create(client, comments=True)['paste_id']
     assert comment(client, pid, 'x' * 10241).status_code == 413
     monkeypatch.setattr(papyrus, '_MAX_COMMENTS_PER_PASTE', 2)
     assert comment(client, pid, 'one').status_code == 303
@@ -339,14 +338,14 @@ def test_comment_limits(client, monkeypatch):
 
 
 def test_comment_nick_is_cleaned(client):
-    pid = create(client, discussions=True)['paste_id']
+    pid = create(client, comments=True)['paste_id']
     comment(client, pid, 'hi', nick='  a\x00b' + 'z' * 100)
     nick = db().execute('SELECT nick FROM comments').fetchone()[0]
     assert '\x00' not in nick and len(nick) <= 32
 
 
 def test_comment_posting_is_rate_limited(client):
-    pid = create(client, discussions=True)['paste_id']
+    pid = create(client, comments=True)['paste_id']
     for _ in range(20):
         assert comment(client, pid, 'hi').status_code == 303
     assert comment(client, pid, 'hi').status_code == 429
@@ -363,7 +362,7 @@ def test_preview_endpoint(client):
 
 
 def test_deleting_a_paste_deletes_its_comments(client):
-    made = create(client, discussions=True)
+    made = create(client, comments=True)
     comment(client, made['paste_id'], 'hi')
     assert db().execute('SELECT COUNT(*) FROM comments').fetchone()[0] == 1
     client.post(f"/remove/{made['removal_token']}")
@@ -371,7 +370,7 @@ def test_deleting_a_paste_deletes_its_comments(client):
 
 
 def test_purge_expired_removes_comments_too(client):
-    pid = create(client, discussions=True)['paste_id']
+    pid = create(client, comments=True)['paste_id']
     comment(client, pid, 'hi')
     keep = create(client)['paste_id']
     past = (datetime.datetime.now(UTC) - datetime.timedelta(minutes=1)).isoformat()
@@ -389,7 +388,7 @@ def test_purge_expired_removes_comments_too(client):
 # ── Threaded replies ──────────────────────────────────────────────────────────
 
 def test_replies_are_nested(client):
-    pid = create(client, discussions=True)['paste_id']
+    pid = create(client, comments=True)['paste_id']
     a = comment_id(comment(client, pid, 'top level A'))
     b = comment_id(comment(client, pid, 'reply B', parent=a))
     c = comment_id(comment(client, pid, 'reply C to B', parent=b))
@@ -398,7 +397,7 @@ def test_replies_are_nested(client):
     assert {r['id']: r['parent_id'] for r in rows} == {a: None, b: a, c: b, d: None}
 
     page = client.get(f'/{pid}').get_data(as_text=True)
-    assert 'id="discussionsCount">4<' in page  # the count covers replies too
+    assert 'id="commentsCount">4<' in page  # the count covers replies too
     # B's box sits inside A's replies container, C inside B's, and D after A entirely.
     pos = {k: page.index(f'id="c-{k}"') for k in (a, b, c, d)}
     assert pos[a] < pos[b] < pos[c] < pos[d]
@@ -407,15 +406,15 @@ def test_replies_are_nested(client):
 
 
 def test_reply_to_unknown_or_foreign_comment_is_rejected(client):
-    p1 = create(client, discussions=True)['paste_id']
-    p2 = create(client, discussions=True)['paste_id']
+    p1 = create(client, comments=True)['paste_id']
+    p2 = create(client, comments=True)['paste_id']
     other = comment_id(comment(client, p2, 'on the other paste'))
     assert comment(client, p1, 'x', parent='nope').status_code == 400
     assert comment(client, p1, 'x', parent=other).status_code == 400
 
 
 def test_reply_depth_is_capped(client):
-    pid = create(client, discussions=True)['paste_id']
+    pid = create(client, comments=True)['paste_id']
     parent = ''
     for i in range(papyrus._MAX_REPLY_DEPTH + 3):
         parent = comment_id(comment(client, pid, f'level {i}', parent=parent))
@@ -445,7 +444,7 @@ def test_csp_only_allows_images_from_our_own_origin(client):
 
 
 def test_pages_show_only_our_own_logo(client):
-    pid = create(client, discussions=True)['paste_id']
+    pid = create(client, comments=True)['paste_id']
     comment(client, pid, '![tracker](http://tracker.example/p.png) <img src=http://evil.example/x.png>')
     for path in ('/', f'/{pid}'):
         html = client.get(path).get_data(as_text=True)
@@ -457,24 +456,24 @@ def test_pages_show_only_our_own_logo(client):
 
 
 def test_binary_upload_is_rejected(client):
-    r = client.post('/create', data=PNG, content_type='text/plain')
-    assert r.status_code == 415
-    r = client.post('/create', data=b'valid start \xff\xfe invalid utf-8', content_type='text/plain')
-    assert r.status_code == 415
-    r = client.post('/create', data=PNG, content_type='image/png')   # not JSON either
+    assert upload(client, ('x.png', PNG)).status_code == 415
+    assert upload(client, ('x.txt', b'valid start \xff\xfe invalid utf-8')).status_code == 415
+    r = client.post('/create', data=PNG, content_type='image/png')   # the JSON endpoint takes JSON only
     assert r.status_code == 400
+    r = client.post('/create', data='plain text', content_type='text/plain')
+    assert r.status_code == 400 and 'JSON body required' in r.get_json()['error']
     assert db().execute('SELECT COUNT(*) FROM pastes').fetchone()[0] == 0
 
 
 def test_nul_bytes_are_rejected_in_json_pastes_and_comments(client):
     assert client.post('/create', json={'content': 'ab\x00cd'}).status_code == 415
-    pid = create(client, discussions=True)['paste_id']
+    pid = create(client, comments=True)['paste_id']
     assert comment(client, pid, 'a\x00b').status_code == 415
 
 
 def test_any_utf8_text_is_still_accepted(client):
     text = 'héllo wörld \u2603 \U0001F600\n\tindented\r\n<svg xmlns="http://www.w3.org/2000/svg"/>'
-    r = client.post('/create', data=text.encode('utf-8'), content_type='text/plain; charset=utf-8')
+    r = upload(client, ('unicode.txt', text.encode('utf-8')))
     assert r.status_code == 200
     pid = curl_urls(r)['Paste URL'].rsplit('/', 1)[1]
     assert client.get(f'/raw/{pid}').get_data(as_text=True) == text
@@ -580,7 +579,7 @@ def report_rows():
 
 
 def test_reports_exist_only_while_the_admin_panel_is_enabled(client, monkeypatch):
-    pid = create(client, discussions=True)['paste_id']
+    pid = create(client, comments=True)['paste_id']
     comment(client, pid, 'hello')
     page = client.get(f'/{pid}').get_data(as_text=True)
     assert f'href="/{pid}/report"' in page and '/report?comment=' in page      # buttons shown
@@ -602,7 +601,7 @@ def test_reports_can_be_switched_off(client, monkeypatch):
 
 
 def test_report_form_for_a_paste_and_a_comment(client):
-    pid = create(client, title='My <b>paste</b>', discussions=True, content='secret <i>code</i>')['paste_id']
+    pid = create(client, title='My <b>paste</b>', comments=True, content='secret <i>code</i>')['paste_id']
     cid = comment_id(comment(client, pid, 'a <script>x</script> comment', nick='ann'))
     page = client.get(f'/{pid}/report')
     html = page.get_data(as_text=True)
@@ -615,8 +614,8 @@ def test_report_form_for_a_paste_and_a_comment(client):
 
 
 def test_report_form_rejects_unknown_targets(client):
-    p1 = create(client, discussions=True)['paste_id']
-    p2 = create(client, discussions=True)['paste_id']
+    p1 = create(client, comments=True)['paste_id']
+    p2 = create(client, comments=True)['paste_id']
     other = comment_id(comment(client, p2, 'elsewhere'))
     assert client.get(f'/{p1}/report?comment=nope').status_code == 404
     assert client.get(f'/{p1}/report?comment={other}').status_code == 404      # a comment of another paste
@@ -637,7 +636,7 @@ def test_report_is_stored_and_the_reporter_is_not_identifiable(client):
 
 
 def test_comment_reports_are_separate_from_paste_reports(client):
-    pid = create(client, discussions=True)['paste_id']
+    pid = create(client, comments=True)['paste_id']
     cid = comment_id(comment(client, pid, 'rude'))
     report(client, pid)
     report(client, pid, comment=cid, reason='abuse')
@@ -698,7 +697,7 @@ def test_deleting_or_expiring_a_paste_removes_its_reports(client):
 
 
 def test_admin_sees_the_report_queue(client):
-    pid = create(client, title='<b>Spammy</b> paste', content='buy   <i>cheap</i>\n pills', discussions=True)['paste_id']
+    pid = create(client, title='<b>Spammy</b> paste', content='buy   <i>cheap</i>\n pills', comments=True)['paste_id']
     cid = comment_id(comment(client, pid, 'rude <script>alert(1)</script> words', nick='troll'))
     report(client, pid, 'spam', 'obvious ad')
     report(client, pid, 'malware', headers={'X-Forwarded-For': '203.0.113.1'})
@@ -725,7 +724,7 @@ def test_admin_dashboard_without_reports(client):
 
 
 def test_admin_can_dismiss_reports_for_one_target_only(client):
-    pid = create(client, discussions=True)['paste_id']
+    pid = create(client, comments=True)['paste_id']
     cid = comment_id(comment(client, pid, 'x'))
     report(client, pid)
     report(client, pid, comment=cid)
@@ -739,7 +738,7 @@ def test_admin_can_dismiss_reports_for_one_target_only(client):
 
 
 def test_admin_deletes_a_comment_but_keeps_its_replies(client):
-    pid = create(client, discussions=True)['paste_id']
+    pid = create(client, comments=True)['paste_id']
     a = comment_id(comment(client, pid, 'top'))
     b = comment_id(comment(client, pid, 'abusive', parent=a))
     c = comment_id(comment(client, pid, 'innocent reply', parent=b))
@@ -748,7 +747,7 @@ def test_admin_deletes_a_comment_but_keeps_its_replies(client):
     login(client)
     assert client.post(f'/admin/comments/{b}/delete', headers={'Origin': 'http://evil'}).status_code == 403
     r = client.post(f'/admin/comments/{b}/delete', data={'return': 'paste'}, headers=ORIGIN)
-    assert r.status_code == 302 and r.headers['Location'].endswith(f'/{pid}#discussionsPanel')
+    assert r.status_code == 302 and r.headers['Location'].endswith(f'/{pid}#commentsPanel')
     rows = {x['id']: x['parent_id'] for x in db().execute('SELECT id, parent_id FROM comments')}
     assert rows == {a: None, c: a}                                    # the reply moved up to a
     assert report_rows() == []                                        # its reports went with it
@@ -758,7 +757,7 @@ def test_admin_deletes_a_comment_but_keeps_its_replies(client):
 
 
 def test_admin_delete_buttons_on_comments_are_for_admins_only(client):
-    pid = create(client, discussions=True)['paste_id']
+    pid = create(client, comments=True)['paste_id']
     comment(client, pid, 'hello')
     assert 'comment-delete' not in client.get(f'/{pid}').get_data(as_text=True)
     login(client)
@@ -855,7 +854,7 @@ def test_hostile_filename_is_reduced_to_a_name(client):
 
 
 def test_curl_upload_accepts_a_filename(client):
-    r = client.post('/create?filename=script.rb', data=b'puts 1\n', content_type='text/plain')
+    r = upload(client, ('script.rb', 'puts 1\n'))
     pid = curl_urls(r)['Paste URL'].rsplit('/', 1)[1]
     assert (stored(pid)['filename'], stored(pid)['language']) == ('script.rb', 'ruby')
 
@@ -915,8 +914,7 @@ def fresh_client():
 
 
 def test_curl_endpoint_prints_paste_raw_and_removal_urls(client):
-    r = client.post('/curl', data={'raw': 'print(1)\n', 'filename': 'a.py', 'expires_in': '1day'},
-                    content_type='multipart/form-data')       # what `curl -F 'raw=<-'` sends
+    r = upload(client, ('a.py', 'print(1)\n'), expires_in='1day')
     assert r.status_code == 200 and r.mimetype == 'text/plain'
     urls = curl_urls(r)
     pid = urls['Paste URL'].rsplit('/', 1)[1]
@@ -929,33 +927,35 @@ def test_curl_endpoint_prints_paste_raw_and_removal_urls(client):
     assert client.get(f'/{pid}').status_code == 404
 
 
-def test_curl_endpoint_also_takes_a_urlencoded_form(client):
-    r = client.post('/curl', data={'raw': 'x', 'title': 'T', 'expires_in': '1week'})
-    assert r.status_code == 200 and curl_urls(r)
-    row = db().execute('SELECT title, expires_at FROM pastes').fetchone()
-    assert row['title'] == 'T' and row['expires_at']
+def test_the_old_terminal_forms_are_gone(client):
+    assert client.post('/curl', data={'raw': 'x'}).status_code in (404, 405)               # no /curl endpoint
+    r = client.post('/', data={'raw': 'x', 'filename': 'a.txt'}, content_type='multipart/form-data')
+    assert r.status_code == 400 and "file=@-" in r.get_data(as_text=True)                  # raw= is not a file
+    r = client.post('/create?filename=a.txt', data='x', content_type='text/plain')
+    assert r.status_code == 400                                                              # no plain-text bodies
+    assert db().execute('SELECT COUNT(*) FROM pastes').fetchone()[0] == 0
 
 
 def test_curl_endpoint_errors_are_plain_text(client):
-    r = client.post('/curl', data={})
+    r = client.post('/', data={}, content_type='multipart/form-data')
     assert (r.status_code, r.mimetype) == (400, 'text/plain') and 'Nothing to save' in r.get_data(as_text=True)
-    r = client.post('/curl', data={'raw': 'a\x00b'})
+    r = upload(client, ('a.txt', b'a\x00b'))
     assert r.status_code == 415 and r.mimetype == 'text/plain'
     assert db().execute('SELECT COUNT(*) FROM pastes').fetchone()[0] == 0
 
 
 def test_curl_endpoint_takes_pastes_up_to_the_size_limit(client):
     big = 'x' * (1024 * 1024)                                       # far beyond Werkzeug's 500 kB form default
-    assert client.post('/curl', data={'raw': big}, content_type='multipart/form-data').status_code == 200
+    assert upload(client, ('big.txt', big)).status_code == 200
     too_big = 'x' * (papyrus.MAX_PASTE_BYTES + 10)
-    r = client.post('/curl', data={'raw': too_big}, content_type='multipart/form-data')
+    r = upload(client, ('huge.txt', too_big))
     assert r.status_code == 413 and r.get_data(as_text=True).strip() == 'Paste too large'
 
 
 def test_curl_endpoint_shares_the_creation_rate_limit(client):
     for _ in range(10):
-        assert client.post('/curl', data={'raw': 'x'}).status_code == 200
-    r = client.post('/curl', data={'raw': 'x'})
+        assert upload(client, ('', 'x')).status_code == 200
+    r = upload(client, ('', 'x'))
     assert r.status_code == 429 and r.mimetype == 'text/plain'
     assert client.post('/create', json={'content': 'x'}).status_code == 429
 
@@ -1037,7 +1037,7 @@ def test_the_remove_now_button_removes_without_asking(client):
 
 
 def test_removing_through_the_link_needs_no_cookie_and_cleans_up(client):
-    made = create(client, discussions=True)
+    made = create(client, comments=True)
     pid, token = made['paste_id'], made['removal_token']
     comment(client, pid, 'hi')
     report(client, pid)
@@ -1181,7 +1181,7 @@ def test_no_expiry_given_means_the_default(client, monkeypatch):
     for body in ({'content': 'x'}, {'content': 'x', 'expires_in': ''}, {'content': 'x', 'expires_in': None}):
         pid = client.post('/create', json=body).get_json()['paste_id']
         assert 86300 < expires_in_seconds(pid) <= 86400
-    r = client.post('/create?title=t', data='x', content_type='text/plain')        # curl without expires_in
+    r = upload(client, ('', 'x'), title='t')                                          # curl without expires_in
     assert 86300 < expires_in_seconds(curl_urls(r)['Paste URL'].rsplit('/', 1)[1]) <= 86400
 
 
@@ -1189,9 +1189,9 @@ def test_an_unknown_expiry_is_refused_not_silently_defaulted(client, monkeypatch
     set_expiries(monkeypatch, {'short': '5m', 'long': '1d'})
     r = client.post('/create', json={'content': 'x', 'expires_in': '1decade'})
     assert r.status_code == 400 and 'short, long' in r.get_json()['error'] and '1decade' in r.get_json()['error']
-    r = client.post('/create?expires_in=forever', data='x', content_type='text/plain')
+    r = upload(client, ('', 'x'), expires_in='forever')
     assert r.status_code == 400 and r.mimetype == 'text/plain' and 'short, long' in r.get_data(as_text=True)
-    r = client.post('/curl', data={'raw': 'x', 'expires_in': 'x' * 500})
+    r = upload(client, ('', 'x'), expires_in='x' * 500)
     assert r.status_code == 400 and len(r.get_data(as_text=True)) < 200
     assert db().execute('SELECT COUNT(*) FROM pastes').fetchone()[0] == 0
 
@@ -1282,12 +1282,12 @@ def test_every_paste_control_lives_in_the_file_bar(client):
     top_bar, form = html.split('</nav>')
     # Top bar: logo | description | theme toggle. Nothing else.
     assert top_bar.index('class="brand"') < top_bar.index('id="title"') < top_bar.index('id="themeToggle"')
-    for control in ('submitBtn', 'clearBtn', 'expires_in', 'allowDiscussions', 'f-name', 'f-lang', 'f-indent-mode'):
+    for control in ('submitBtn', 'clearBtn', 'expires_in', 'allowComments', 'f-name', 'f-lang', 'f-indent-mode'):
         assert control not in top_bar, control
     # Per file: Filename | Language | Indent mode | Indent size | Wrap | Remove file. Per paste, below (script moves
     # them into the first file's bar while there is one file): Add file | Expiry | Allow comments | Clear | Save
     order = [form.index(c) for c in ('f-name', 'f-lang', 'f-indent-mode', 'f-indent-size', 'f-wrap', 'f-remove', 'f-content',
-                                     'id="addFileBtn"', 'id="expires_in"', 'id="allowDiscussions"', 'id="clearBtn"', 'id="submitBtn"')]
+                                     'id="addFileBtn"', 'id="expires_in"', 'id="allowComments"', 'id="clearBtn"', 'id="submitBtn"')]
     assert order == sorted(order)
     assert 'Allow comments' in form and not re.search(r'>\s*Discuss\s*<|> Discuss\b', html)   # the old label is gone
     assert 'Control+Shift+M' in form
@@ -1419,7 +1419,7 @@ def hashlib_sha(text):
 
 def test_pages_start_in_the_default_palette_and_remember_a_choice_before_painting(client):
     html = client.get('/').get_data(as_text=True)
-    assert '<html lang="en" data-palette="rust">' in html
+    assert re.search(r'<html lang="en" data-palette="rust" data-theme-default="(dark|light|auto)">', html)
     head = html.split('</head>')[0]
     assert "localStorage.getItem('palette')" in head and 'setAttribute(\'data-palette\', p)' in head
     names = re.search(r'(\[[^\]]*\])\.indexOf\(p\)', head).group(1)
@@ -1427,7 +1427,7 @@ def test_pages_start_in_the_default_palette_and_remember_a_choice_before_paintin
 
 
 def test_the_dropdown_sits_next_to_the_toggle_on_every_page(client):
-    pid = create(client, discussions=True)['paste_id']
+    pid = create(client, comments=True)['paste_id']
     tok = create(client)['removal_token']
     for path in ('/', f'/{pid}', f'/{pid}/report', f'/remove/{tok}'):
         html = client.get(path).get_data(as_text=True)
@@ -1562,7 +1562,7 @@ def test_the_shipped_footer_is_the_disclaimer_and_there_is_no_notice():
 
 
 def test_the_footer_is_on_every_page_and_no_notice_by_default(client):
-    pid = create(client, discussions=True)['paste_id']
+    pid = create(client, comments=True)['paste_id']
     tok = create(client)['removal_token']
     paths = ['/', f'/{pid}', f'/{pid}/report', f'/remove/{tok}', '/admin/login', '/nothing-here-0000']
     for path in paths:
@@ -1824,14 +1824,6 @@ def test_a_one_file_paste_looks_as_before(client):
     assert 'class="file-head"' not in html and 'python &middot; 1 line' in html.split('</nav>')[0]
 
 
-def test_curl_takes_repeated_files(client):
-    r = client.post('/curl', data={'raw': ['one', 'two'], 'filename': ['a.txt', 'b.txt']}, content_type='multipart/form-data')
-    text = r.get_data(as_text=True)
-    assert r.status_code == 200 and 'Raw URL (a.txt)' in text and 'Raw URL (b.txt)' in text and 'Removal URL' in text
-    pid = re.search(r'Paste URL\s*:?\s*\S+/([0-9a-f]+)', text).group(1)
-    assert client.get(f'/raw/{pid}/b.txt').get_data(as_text=True) == 'two'
-
-
 def test_removing_a_multi_file_paste_removes_every_file(client):
     made = client.post('/create', json={'files': [{'content': 'a'}, {'content': 'b'}]}).get_json()
     client.get(f"/remove/{made['removal_token']}")
@@ -1851,21 +1843,21 @@ def test_the_api_page_explains_the_ways_to_post(client):
     r = client.get('/api')
     html = __import__('html').unescape(r.get_data(as_text=True))
     assert r.status_code == 200
-    for text in ("curl -F 'file=@-' http://localhost/", "curl -F 'file=@deploy.sh' http://localhost/", "curl -X POST http://localhost/curl -F 'raw=<deploy.sh'", '--data-binary', 'application/json', '"files"',
+    for text in ("curl -F 'file=@-' http://localhost/", "curl -F 'file=@deploy.sh' http://localhost/", ";filename=notes.md", 'application/json', '"files"',
                  '/raw/<id>/<filename>', 'Removal URL', 'expires_in', '415', '429',
                  f'at most {papyrus._human_size(papyrus.MAX_PASTE_BYTES)}'):
         assert text in html, text
     for option in papyrus._EXPIRY_OPTIONS:
         assert f"<code>{option['value']}</code>" in html
+    assert '/curl' not in html and 'data-binary' not in html and "raw=" not in html       # one terminal form
 
 
 def test_the_api_examples_really_work(client):
     """The commands the page shows are the ones the app accepts."""
-    r = client.post('/curl', data={'raw': 'x', 'filename': 'deploy.sh', 'title': 'T', 'discussions': '1',
-                                   'expires_in': papyrus._DEFAULT_EXPIRY}, content_type='multipart/form-data')
+    r = upload(client, ('deploy.sh', 'x'), title='Deploy helper', comments='1', expires_in=papyrus._DEFAULT_EXPIRY)
     assert r.status_code == 200
-    r = client.post('/create?filename=deploy.sh&title=Deploy+helper', data='echo', content_type='text/plain')
-    assert r.status_code == 200 and 'Paste URL' in r.get_data(as_text=True)
+    r = upload(client, ('main.py', 'print(1)\n'), ('README.md', '# hi'))
+    assert r.status_code == 200 and 'Raw URL (README.md)' in r.get_data(as_text=True)
     r = client.post('/create', json={'title': 'P', 'files': [{'filename': 'main.py', 'content': 'print(1)\n'}, {'filename': 'README.md', 'content': '# Hi'}]})
     assert r.status_code == 200 and set(r.get_json()) == {'paste_id', 'url', 'removal_token', 'removal_url'}
 
@@ -1898,14 +1890,12 @@ def post_as(ip, client, path='/create', **body):
 
 
 def test_a_blocked_address_cannot_create_pastes_or_comment_but_can_read(client):
-    pid = create(client, discussions=True)['paste_id']
+    pid = create(client, comments=True)['paste_id']
     admin = admin_client()
     assert 'Blocked 203.0.113.9/32' in block(admin, address='203.0.113.9', note='spam', duration='1day')
     r = post_as('203.0.113.9', client)
     assert r.status_code == 403 and 'blocked' in r.get_json()['error']
     assert post_as('203.0.113.10', client).status_code == 200                         # a neighbour is fine
-    curl = client.post('/curl', data={'raw': 'x'}, content_type='multipart/form-data', **{k: v for k, v in forwarded('203.0.113.9').items() if k != 'headers'}, headers={'X-Forwarded-For': '203.0.113.9'})
-    assert curl.status_code == 403 and 'blocked' in curl.get_data(as_text=True)
     comment = client.post(f'/{pid}/comment', data={'content': 'hi'}, **forwarded('203.0.113.9'))
     assert comment.status_code == 403
     assert client.get(f'/{pid}', **forwarded('203.0.113.9')).status_code == 200      # reading stays open
@@ -1977,7 +1967,7 @@ def test_addresses_are_not_stored_unless_asked_for(client):
 
 def test_with_store_ips_the_admin_can_block_a_paste_or_comment_author(client, monkeypatch):
     monkeypatch.setattr(papyrus, '_STORE_IPS', True)
-    pid = post_as('203.0.113.9', client, discussions=True).get_json()['paste_id']
+    pid = post_as('203.0.113.9', client, comments=True).get_json()['paste_id']
     cid_resp = client.post(f'/{pid}/comment', data={'content': 'rude'}, **forwarded('2001:db8:5:6:7:8:9:a'))
     assert cid_resp.status_code in (302, 303)
     admin = admin_client()
@@ -1992,7 +1982,7 @@ def test_with_store_ips_the_admin_can_block_a_paste_or_comment_author(client, mo
 
 def test_a_stored_address_goes_when_the_paste_does(client, monkeypatch):
     monkeypatch.setattr(papyrus, '_STORE_IPS', True)
-    made = post_as('203.0.113.9', client, discussions=True).get_json()
+    made = post_as('203.0.113.9', client, comments=True).get_json()
     client.get(f"/remove/{made['removal_token']}")
     assert db().execute("SELECT COUNT(*) FROM pastes WHERE creator_ip != ''").fetchone()[0] == 0
 
@@ -2029,7 +2019,9 @@ def test_a_released_version_2_database_is_upgraded_in_place(tmp_path, monkeypatc
     c = papyrus.app.test_client()
     assert c.get('/raw/abc123abc123').get_data(as_text=True) == 'still here'
     check = sqlite3.connect(path)
-    assert check.execute('PRAGMA user_version').fetchone()[0] == papyrus.SCHEMA_VERSION == 3
+    assert check.execute('PRAGMA user_version').fetchone()[0] == papyrus.SCHEMA_VERSION == 4
+    columns = [r[1] for r in check.execute('PRAGMA table_info(pastes)')]
+    assert 'comments_enabled' in columns and 'discussions_enabled' not in columns and 'creator_ip' in columns
     assert check.execute("SELECT creator_ip FROM pastes").fetchone()[0] == ''
     assert check.execute("SELECT COUNT(*) FROM blocks").fetchone()[0] == 0
     papyrus._db_initialized = False
@@ -2052,7 +2044,7 @@ def test_a_database_from_before_version_2_is_still_refused(tmp_path, monkeypatch
 
 def test_the_admin_view_data_has_files_comments_and_changes_nothing(client, monkeypatch):
     monkeypatch.setattr(papyrus, '_STORE_IPS', True)
-    pid = post_as('203.0.113.9', client, title='Look <b>here</b>', discussions=True,
+    pid = post_as('203.0.113.9', client, title='Look <b>here</b>', comments=True,
                   files=[{'filename': 'a.txt', 'content': '<script>alert(1)</script>'}, {'filename': 'b.py', 'content': 'x=1'}]).get_json()['paste_id']
     client.post(f'/{pid}/comment', data={'content': '**rude**'}, **forwarded('198.51.100.4'))
     admin = admin_client()
@@ -2145,14 +2137,10 @@ def test_several_uploads_make_a_multi_file_paste(client):
     assert client.get(f'/raw/{pid}/b.sh').get_data(as_text=True) == 'echo b\n' and stored(pid)['title'] == 'Two'
 
 
-def test_uploads_work_on_the_curl_endpoint_too_and_the_old_form_still_works(client):
-    assert upload(client, ('a.txt', 'x'), path='/curl').status_code == 200
-    r = client.post('/curl', data={'raw': 'text', 'filename': 'old.txt'}, content_type='multipart/form-data')
-    assert r.status_code == 200
-    r = client.post('/', data={'raw': 'to the root'}, content_type='multipart/form-data')
-    assert r.status_code == 200 and 'Paste URL' in r.get_data(as_text=True)
-    mixed = upload(client, ('up.txt', 'from a file'), raw='from a field')
-    assert mixed.status_code == 200 and 'Raw URL (' in mixed.get_data(as_text=True)
+def test_uploads_and_text_fields_in_one_post_are_not_a_thing(client):
+    """Only file fields make files; a stray raw= field is ignored, not turned into a second file."""
+    r = upload(client, ('up.txt', 'from a file'), raw='from a field')
+    assert r.status_code == 200 and 'Raw URL (' not in r.get_data(as_text=True)      # one file, not two
 
 
 def test_uploads_must_be_small_utf8_text(client, monkeypatch):
@@ -2175,3 +2163,99 @@ def test_blocked_addresses_cannot_upload_to_the_root_either(client):
     r = client.post('/', data={'file': (io.BytesIO(b'x'), 'a.txt')}, content_type='multipart/form-data',
                     environ_overrides={'REMOTE_ADDR': '127.0.0.1'}, headers={'X-Forwarded-For': '203.0.113.9'})
     assert r.status_code == 403 and 'blocked' in r.get_data(as_text=True)
+
+
+def test_a_version_3_database_gets_the_column_renamed_and_keeps_its_comments_setting(tmp_path, monkeypatch):
+    path = str(tmp_path / 'v3.db')
+    conn = sqlite3.connect(path)
+    conn.executescript('''
+        CREATE TABLE pastes (id TEXT PRIMARY KEY, title TEXT NOT NULL DEFAULT 'Untitled',
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, expires_at TEXT, views INTEGER DEFAULT 0,
+            removal_hash TEXT NOT NULL DEFAULT '', discussions_enabled INTEGER DEFAULT 0, creator_ip TEXT NOT NULL DEFAULT '');
+        CREATE TABLE files (paste_id TEXT NOT NULL, position INTEGER NOT NULL, filename TEXT NOT NULL DEFAULT '',
+            language TEXT NOT NULL DEFAULT 'text', content TEXT NOT NULL, PRIMARY KEY (paste_id, position));
+        CREATE TABLE comments (id TEXT PRIMARY KEY, paste_id TEXT NOT NULL, parent_id TEXT, nick TEXT,
+            content TEXT NOT NULL, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, creator_ip TEXT NOT NULL DEFAULT '');
+        CREATE TABLE blocks (id TEXT PRIMARY KEY, network TEXT NOT NULL UNIQUE, note TEXT NOT NULL DEFAULT '',
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, expires_at TEXT);
+        INSERT INTO pastes (id, title, discussions_enabled) VALUES ('abc123abc123', 'with comments', 1);
+        INSERT INTO files VALUES ('abc123abc123', 0, 'a.txt', 'text', 'body');
+        INSERT INTO comments (id, paste_id, content) VALUES ('c1', 'abc123abc123', 'kept comment');
+        PRAGMA user_version = 3;
+    ''')
+    conn.commit(); conn.close()
+    monkeypatch.setattr(papyrus, 'DATABASE', path)
+    monkeypatch.setattr(papyrus, '_db_initialized', False)
+    monkeypatch.setattr(papyrus, '_cleanup_running', True)
+    papyrus.init_db()
+    html = papyrus.app.test_client().get('/abc123abc123').get_data(as_text=True)
+    assert 'kept comment' in html and 'id="commentsPanel"' in html          # the paste still takes comments
+    papyrus._db_initialized = False
+    papyrus.init_db()                                                         # and running it again is harmless
+
+
+# ── Comments: the site-wide switch and the default ────────────────────────────
+
+def test_comments_are_off_by_default_and_follow_pastes_comments_default(client, monkeypatch):
+    plain = client.post('/create', json={'content': 'x', 'expires_in': '1hour'}).get_json()['paste_id']
+    assert db().execute('SELECT comments_enabled FROM pastes WHERE id=?', (plain,)).fetchone()[0] == 0
+    monkeypatch.setattr(papyrus, '_COMMENTS_DEFAULT', True)
+    for_json = client.post('/create', json={'content': 'x', 'expires_in': '1hour'}).get_json()['paste_id']
+    via_curl = curl_urls(upload(client, ('', 'x')))['Paste URL'].rsplit('/', 1)[1]
+    off = client.post('/create', json={'content': 'x', 'expires_in': '1hour', 'comments': False}).get_json()['paste_id']
+    off_curl = curl_urls(upload(client, ('', 'x'), comments='0'))['Paste URL'].rsplit('/', 1)[1]
+    flags = {pid: db().execute('SELECT comments_enabled FROM pastes WHERE id=?', (pid,)).fetchone()[0]
+             for pid in (for_json, via_curl, off, off_curl)}
+    assert flags == {for_json: 1, via_curl: 1, off: 0, off_curl: 0}          # said nothing: the default; said no: no
+
+
+def test_the_create_page_checkbox_starts_as_the_site_default(client, monkeypatch):
+    html = client.get('/').get_data(as_text=True)
+    assert 'id="allowComments" data-default="0"' in html
+    monkeypatch.setattr(papyrus, '_COMMENTS_DEFAULT', True)
+    assert 'id="allowComments" data-default="1"' in client.get('/').get_data(as_text=True)
+
+
+def test_comments_can_be_switched_off_for_the_whole_site(client, monkeypatch):
+    pid = create(client, comments=True)['paste_id']
+    assert comment(client, pid, 'before').status_code in (302, 303)
+    monkeypatch.setattr(papyrus, '_COMMENTS_ENABLED', False)
+    page = client.get(f'/{pid}').get_data(as_text=True)
+    assert 'id="commentsPanel"' not in page and 'before' not in page                  # hidden, not deleted
+    assert 'allowComments' not in client.get('/').get_data(as_text=True)
+    assert comment(client, pid, 'after').status_code == 403
+    newest = create(client, comments=True)['paste_id']                                 # asking for comments is ignored
+    assert db().execute('SELECT comments_enabled FROM pastes WHERE id=?', (newest,)).fetchone()[0] == 0
+    assert db().execute('SELECT COUNT(*) FROM comments').fetchone()[0] == 1           # the old comment is still stored
+
+
+# ── Light/dark default ────────────────────────────────────────────────────────
+
+@pytest.mark.parametrize('value, expected', [(None, 'dark'), ('dark', 'dark'), ('light', 'light'), ('auto', 'auto')])
+def test_the_theme_default_is_validated(value, expected):
+    assert papyrus._load_theme_default(value) == expected
+
+
+def test_a_bad_theme_default_stops_startup_with_a_clear_message():
+    with pytest.raises(RuntimeError, match='theme.default must be'):
+        papyrus._load_theme_default('purple')
+
+
+@pytest.mark.parametrize('mode', ['dark', 'light', 'auto'])
+def test_the_theme_default_is_in_the_page_before_it_paints(client, monkeypatch, mode):
+    monkeypatch.setattr(papyrus, '_THEME_DEFAULT', mode)
+    html = client.get('/').get_data(as_text=True)
+    assert f'data-theme-default="{mode}"' in html
+    head = html.split('</head>')[0]
+    assert "getAttribute('data-theme-default')" in head and "d === 'dark'" in head      # decided in the head script: no flash
+
+
+def test_the_shipped_example_config_defaults_to_dark_and_comments_are_off():
+    example = json.load(open(os.path.join(os.path.dirname(papyrus.__file__), 'config.example.json'), encoding='utf-8'))
+    assert example['theme']['default'] == 'dark'
+    assert example['features']['comments'] is True and example['pastes']['comments_default'] is False
+
+
+def test_the_os_theme_listener_only_applies_to_auto():
+    js = open(os.path.join(os.path.dirname(papyrus.__file__), 'static', 'js', 'app.js'), encoding='utf-8').read()
+    assert "configDefault === 'auto' && !localStorage.getItem('theme')" in js

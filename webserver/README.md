@@ -50,7 +50,7 @@ Also set `"use_https": true` in `config.json` when serving over TLS (marks the a
 Run Papyrus and the proxy, then post a paste while sending a forged header:
 
 ```bash
-curl -i -H 'X-Forwarded-For: 1.2.3.4' --data-binary 'hello' https://paste.example.com/create
+echo hello | curl -i -H 'X-Forwarded-For: 1.2.3.4' -F 'file=@-' https://paste.example.com/
 ```
 
 The rate limit must apply to *your* address, not `1.2.3.4`. After 10 pastes in 10 minutes you get
