@@ -149,6 +149,8 @@ for the per-IP rate limits) and `X-Forwarded-Proto` (`https` over TLS, for the o
 believes them only from a proxy on the same machine (`server.trusted_proxy_ips`), so a visitor who
 reaches the app directly can't forge them. Keep it bound to `127.0.0.1` and set `"use_https": true`
 when serving over TLS. [`webserver/README.md`](webserver/README.md) has the details and a quick check.
+The access log (`papyrus.log`, or the journal under systemd) shows the visitor's address by the same rule, not the
+proxy's 127.0.0.1. If it still does, the proxy is not sending `X-Forwarded-For`.
 
 A systemd system service (`/etc/systemd/system/papyrus.service`), for a checkout in a user's home directory. Run `python3 app.py`
 once as that user first to set everything up (that run only bootstraps; the service starts Papyrus with `--start`).

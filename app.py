@@ -501,10 +501,13 @@ def _client_ip():
     The last entry is used: it is the one the proxy itself added or set, so anything a
     visitor put in front of it is ignored.
     """
-    peer = request.remote_addr or ''
+    return _resolve_client_ip(request.remote_addr or '', request.headers.get('X-Forwarded-For', ''))
+
+def _resolve_client_ip(peer, forwarded_for):
+    """The rule behind _client_ip(), on plain strings (the access log uses it too)."""
     if not _is_trusted_peer(peer):
         return peer
-    last = request.headers.get('X-Forwarded-For', '').rsplit(',', 1)[-1].strip()
+    last = forwarded_for.rsplit(',', 1)[-1].strip()
     try:
         return str(ipaddress.ip_address(last))
     except ValueError:
@@ -1434,6 +1437,21 @@ def _post_fork(server, worker):
     _start_cleanup_task()
 
 
+def _access_logger_class():
+    """Gunicorn's access log shows the socket peer, which behind a proxy is always the proxy (127.0.0.1).
+    Log the visitor's address instead, resolved by the same rule as the rate limits: X-Forwarded-For, but
+    only from a trusted proxy, so a forged header from anyone else is never logged as the address."""
+    from gunicorn.glogging import Logger
+
+    class ProxyAwareLogger(Logger):
+        def atoms(self, resp, req, environ, request_time):
+            atoms = super().atoms(resp, req, environ, request_time)
+            atoms['h'] = _resolve_client_ip(environ.get('REMOTE_ADDR', ''), environ.get('HTTP_X_FORWARDED_FOR', '')) or '-'
+            return atoms
+
+    return ProxyAwareLogger
+
+
 def _control_socket_path(port):
     runtime_dir = os.environ.get('XDG_RUNTIME_DIR') or tempfile.gettempdir()
     return os.path.join(runtime_dir, f'papyrus-{port}.ctl')
@@ -1452,6 +1470,7 @@ def _server_options(host, port, workers, pidfile=None):
         'graceful_timeout':   8,      # on stop, finish running requests, but don't wait for idle connections
         'keepalive':          5,
         'accesslog':          '-',
+        'logger_class':       _access_logger_class(),
         'errorlog':           '-',
         'loglevel':           'info',
         'post_fork':          _post_fork,

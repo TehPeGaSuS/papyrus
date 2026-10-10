@@ -429,3 +429,35 @@ def test_the_readme_units_start_the_papyrus_command_with_start():
     assert len(lines) == 2 and all(l.endswith('/.venv/bin/papyrus --start') for l in lines)
     assert 'WantedBy=default.target' in readme and 'enable-linger' in readme          # the user unit
     assert 'papyrus = ' in open(os.path.join(root, 'pyproject.toml'), encoding='utf-8').read()   # the command exists
+
+
+# ── the access log shows the visitor, not the proxy ───────────────────────────
+
+class _Resp:
+    status, sent, headers = '200 OK', 12, []
+
+
+def _logged_address(peer, forwarded_for=None):
+    import datetime
+    logger = papyrus._access_logger_class()
+    environ = {'REMOTE_ADDR': peer, 'REQUEST_METHOD': 'GET', 'RAW_URI': '/', 'SERVER_PROTOCOL': 'HTTP/1.1'}
+    if forwarded_for is not None:
+        environ['HTTP_X_FORWARDED_FOR'] = forwarded_for
+    atoms = logger.atoms(logger.__new__(logger), _Resp(), [], environ, datetime.timedelta(0))
+    return atoms['h']
+
+
+def test_the_access_log_shows_the_visitor_behind_a_trusted_proxy():
+    assert _logged_address('127.0.0.1', '203.0.113.9') == '203.0.113.9'
+    assert _logged_address('127.0.0.1', '198.51.100.1, 203.0.113.9') == '203.0.113.9'     # the proxy's own entry
+    assert _logged_address('::1', '2001:db8::7') == '2001:db8::7'
+
+
+def test_the_access_log_does_not_believe_headers_from_anyone_else():
+    assert _logged_address('192.0.2.50', '203.0.113.9') == '192.0.2.50'     # not a trusted proxy: forged
+    assert _logged_address('127.0.0.1') == '127.0.0.1'                       # a trusted proxy that sent nothing
+    assert _logged_address('127.0.0.1', 'not-an-address') == '127.0.0.1'
+
+
+def test_gunicorn_is_given_that_logger():
+    assert papyrus._server_options('127.0.0.1', 5500, 2)['logger_class'].__name__ == 'ProxyAwareLogger'
