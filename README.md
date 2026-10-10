@@ -79,6 +79,11 @@ no `config.json`. Restart after changing it.
   and has no liability for, what people paste). `site.notice`: an optional banner under the top bar, off by default.
   Both are inline Markdown, so `[links](https://example.org)` and `**emphasis**` work and raw HTML is escaped; leave
   either empty to hide it. The footer always ends with `Powered by Papyrus <version> · Source` (the link goes to the project's source)
+  For example, a notice with a link (write it as one line of JSON in `config.json`):
+
+  ```json
+  "notice": "Pastes are removed after **one month**. Please don't paste secrets. See the [rules](https://example.org/rules)."
+  ```
 - `theme.palettes`, `theme.palette`: the colour themes visitors can pick from the dropdown next to the light/dark
   toggle, and the default one (rust). See below
 - `features.show_recent`: enable the `/recent` page
