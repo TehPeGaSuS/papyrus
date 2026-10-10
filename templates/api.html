@@ -1,0 +1,74 @@
+{% extends "base.html" %}
+
+{% block title %}API — {{ cfg.site.name }}{% endblock %}
+
+{% block nav_actions %}
+<a href="{{ url_for('index') }}" class="nav-btn nav-btn-save">New</a>
+{% include "_theme_controls.html" %}
+{% endblock %}
+
+{% macro code(text) %}<pre class="api-code"><code>{{ text }}</code></pre>{% endmacro %}
+
+{% block content %}
+<article class="api-page markdown-body">
+    <h1>Posting from scripts</h1>
+    <p>Pastes are plain text. No account or key is needed; the address below is this site.
+       Every example prints a <strong>Paste URL</strong>, a <strong>Raw URL</strong> and a <strong>Removal URL</strong>
+       (keep that one private: opening it removes the paste).</p>
+
+    <h2>From the shell</h2>
+    <p>Pipe anything in:</p>
+    {{ code('$ echo "your text" | curl -X POST ' ~ base ~ '/curl -F \'raw=<-\'\nPaste URL:   ' ~ base ~ '/3f9c1a7e2b4d\nRaw URL:     ' ~ base ~ '/raw/3f9c1a7e2b4d\nRemoval URL: ' ~ base ~ '/remove/…') }}
+    <p>Send a file, with a filename (its extension picks the syntax highlighting), a description and an expiry:</p>
+    {{ code("$ curl -X POST " ~ base ~ "/curl -F 'raw=<deploy.sh' -F filename=deploy.sh \\\n       -F title='Deploy helper' -F expires_in=" ~ example_expiry ~ " -F discussions=1") }}
+    <p>The same, sending the file as the request body (options go in the query string):</p>
+    {{ code("$ curl --data-binary @deploy.sh -H 'Content-Type: text/plain' \\\n       '" ~ base ~ "/create?filename=deploy.sh&title=Deploy+helper'") }}
+
+    <h3>Form and query fields</h3>
+    <table>
+        <tr><th>Field</th><th>Meaning</th></tr>
+        <tr><td><code>raw</code></td><td>the text (form field of <code>/curl</code>; the request body of <code>/create</code>)</td></tr>
+        <tr><td><code>filename</code></td><td>optional; the extension picks the language and the paste is titled after it</td></tr>
+        <tr><td><code>title</code></td><td>optional description</td></tr>
+        <tr><td><code>language</code></td><td>optional; <code>auto</code> or omitted means "from the filename". Names: <a href="{{ url_for('get_languages') }}"><code>/api/languages</code></a></td></tr>
+        <tr><td><code>expires_in</code></td><td>optional, one of the values below (default <code>{{ default_expiry }}</code>)</td></tr>
+        <tr><td><code>discussions</code></td><td>optional, <code>1</code> lets visitors comment</td></tr>
+    </table>
+
+    <h2>Several files in one paste</h2>
+    <p>Repeat <code>raw</code> and <code>filename</code> for each file, up to {{ max_files }} files. The reply has one raw URL per file.</p>
+    {{ code("$ curl -X POST " ~ base ~ "/curl -F 'raw=<main.py' -F filename=main.py \\\n       -F 'raw=<README.md' -F filename=README.md\nPaste URL:   " ~ base ~ "/3f9c1a7e2b4d\nRaw URL (main.py):   " ~ base ~ "/raw/3f9c1a7e2b4d\nRaw URL (README.md): " ~ base ~ "/raw/3f9c1a7e2b4d/README.md\nRemoval URL: " ~ base ~ "/remove/…") }}
+
+    <h2>JSON</h2>
+    <p><code>POST /create</code> with <code>Content-Type: application/json</code>. One file:</p>
+    {{ code('{"content": "print(1)\\n", "filename": "hello.py", "title": "Hello", "expires_in": "' ~ example_expiry ~ '", "discussions": false}') }}
+    <p>Several files:</p>
+    {{ code('{"title": "Project", "files": [\n  {"filename": "main.py",   "content": "print(1)\\n"},\n  {"filename": "README.md", "content": "# Hi"}\n]}') }}
+    <p>The answer is JSON; <code>url</code> and <code>removal_url</code> are paths on this site:</p>
+    {{ code('{"paste_id": "3f9c1a7e2b4d", "url": "/3f9c1a7e2b4d", "removal_token": "…", "removal_url": "/remove/…"}') }}
+    {{ code("$ curl -s -X POST " ~ base ~ "/create -H 'Content-Type: application/json' \\\n       -d '{\"content\": \"hello\", \"filename\": \"hi.txt\"}'") }}
+
+    <h2>Reading and removing</h2>
+    <table>
+        <tr><td><code>GET /&lt;id&gt;</code></td><td>the page (<code>?view=preview</code> shows Markdown files rendered, <code>?f=2&amp;L=5-12</code> highlights lines of the second file)</td></tr>
+        <tr><td><code>GET /raw/&lt;id&gt;</code></td><td>the first file as <code>text/plain</code></td></tr>
+        <tr><td><code>GET /raw/&lt;id&gt;/&lt;filename&gt;</code></td><td>any file of the paste</td></tr>
+        <tr><td><code>GET</code> or <code>POST /remove/&lt;token&gt;</code></td><td>removes the paste at once, no confirmation, so plain <code>curl</code> works (a <code>HEAD</code> request only checks)</td></tr>
+    </table>
+    {{ code("$ curl " ~ base ~ "/raw/3f9c1a7e2b4d\n$ curl " ~ base ~ "/remove/<token>      # the Removal URL: fetching it removes the paste (POST works too)") }}
+
+    <h2>Limits</h2>
+    <ul>
+        <li>UTF-8 text only (binary is refused with 415); at most {{ max_size }} per paste in total and {{ max_files }} files.</li>
+        <li>10 pastes per 10 minutes per address.</li>
+        <li>Expiry values for <code>expires_in</code>: {% for o in expiries %}<code>{{ o.value }}</code> ({{ o.label }}){{ ', ' if not loop.last }}{% endfor %}.</li>
+    </ul>
+    <table>
+        <tr><th>Status</th><th>Meaning</th></tr>
+        <tr><td>400</td><td>nothing to save, an empty file, or a bad request (the body says which)</td></tr>
+        <tr><td>413</td><td>paste too large, or more than {{ max_files }} files</td></tr>
+        <tr><td>415</td><td>not UTF-8 text</td></tr>
+        <tr><td>429</td><td>too many requests; wait a few minutes</td></tr>
+    </table>
+</article>
+{% endblock %}

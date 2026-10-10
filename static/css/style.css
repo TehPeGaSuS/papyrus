@@ -720,3 +720,12 @@ a.comment-reply:hover { text-decoration: underline; color: var(--primary); }
 .paste-controls .bar-field-first { margin-left: auto; }
 .paste-bar > .paste-controls { display: contents; }
 .paste-bar { justify-content: flex-start; }
+
+/* ── API page ─────────────────────────────────────────────────────────────── */
+.api-page { max-width: 56rem; margin: 0 auto; padding: 1.5rem 1.25rem 2.5rem; line-height: 1.65; }
+.api-page h1 { font-size: 1.6rem; margin-bottom: 0.6rem; }
+.api-page h2 { margin: 1.8rem 0 0.6rem; padding-bottom: 0.3rem; border-bottom: 1px solid var(--border); font-size: 1.25rem; }
+.api-page h3 { margin: 1.2rem 0 0.4rem; font-size: 1.02rem; }
+.api-page p, .api-page ul, .api-page table, .api-page pre { margin-bottom: 0.8rem; }
+.api-code { overflow-x: auto; white-space: pre; }
+.api-page td, .api-page th { vertical-align: top; }

@@ -1844,3 +1844,32 @@ def test_the_markdown_preview_works_per_file(client):
     html = client.get(f'/{pid}?view=preview').get_data(as_text=True)
     assert html.count('data-role="preview"') == 1 and '<h1>Hi</h1>' in html
     assert html.count('class="file-card previewing"') == 1
+
+
+# ── The API page ──────────────────────────────────────────────────────────────
+
+def test_the_api_page_explains_the_ways_to_post(client):
+    r = client.get('/api')
+    html = __import__('html').unescape(r.get_data(as_text=True))
+    assert r.status_code == 200
+    for text in ("curl -X POST http://localhost/curl -F 'raw=<-'", '--data-binary', 'application/json', '"files"',
+                 '/raw/<id>/<filename>', 'Removal URL', 'expires_in', '415', '429',
+                 f'at most {papyrus._human_size(papyrus.MAX_PASTE_BYTES)}'):
+        assert text in html, text
+    for option in papyrus._EXPIRY_OPTIONS:
+        assert f"<code>{option['value']}</code>" in html
+
+
+def test_the_api_examples_really_work(client):
+    """The commands the page shows are the ones the app accepts."""
+    r = client.post('/curl', data={'raw': 'x', 'filename': 'deploy.sh', 'title': 'T', 'discussions': '1',
+                                   'expires_in': papyrus._DEFAULT_EXPIRY}, content_type='multipart/form-data')
+    assert r.status_code == 200
+    r = client.post('/create?filename=deploy.sh&title=Deploy+helper', data='echo', content_type='text/plain')
+    assert r.status_code == 200 and 'Paste URL' in r.get_data(as_text=True)
+    r = client.post('/create', json={'title': 'P', 'files': [{'filename': 'main.py', 'content': 'print(1)\n'}, {'filename': 'README.md', 'content': '# Hi'}]})
+    assert r.status_code == 200 and set(r.get_json()) == {'paste_id', 'url', 'removal_token', 'removal_url'}
+
+
+def test_the_editor_links_to_the_api_page(client):
+    assert 'href="/api"' in client.get('/').get_data(as_text=True)

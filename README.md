@@ -189,6 +189,7 @@ link is also shown once after saving, for removing the paste from another device
 ## API
 
 - `GET /`: create-paste page
+- `GET /api`: a page on the site that explains the ways to post (curl, plain text, JSON), with this site's own address in the examples
 - `POST /curl`: create a paste from form fields (`raw`, optional `filename`, `title`, `language`, `expires_in`,
   `discussions`); prints the paste, raw and removal URLs as plain text
 - `POST /create`: the same from JSON (`content`, or `files`: a list of `{content, filename, language}` for several

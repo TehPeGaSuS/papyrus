@@ -981,6 +981,14 @@ def create_paste():
     _set_removal_cookie(response, paste_id, token, expires_at)
     return response
 
+@app.route('/api')
+def api_docs():
+    """How to post pastes from scripts: curl, plain text, JSON. The examples use this site's own address."""
+    return render_template('api.html', base=url_for('index', _external=True).rstrip('/'), max_files=MAX_FILES,
+                           max_bytes=MAX_PASTE_BYTES, max_size=_human_size(MAX_PASTE_BYTES),
+                           expiries=_EXPIRY_OPTIONS, default_expiry=_DEFAULT_EXPIRY,
+                           example_expiry=next((o['value'] for o in _EXPIRY_OPTIONS if o['value'] != _DEFAULT_EXPIRY), _DEFAULT_EXPIRY))
+
 @app.route('/curl', methods=['POST'])
 def create_paste_curl():
     """`echo hi | curl -X POST https://host/curl -F 'raw=<-'`, plus optional filename, title, language,
