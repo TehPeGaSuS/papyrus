@@ -150,8 +150,9 @@ believes them only from a proxy on the same machine (`server.trusted_proxy_ips`)
 reaches the app directly can't forge them. Keep it bound to `127.0.0.1` and set `"use_https": true`
 when serving over TLS. [`webserver/README.md`](webserver/README.md) has the details and a quick check.
 
-systemd (`/etc/systemd/system/papyrus.service`), after running `python3 app.py` once as the service
-user to set everything up (that first run only bootstraps; the service starts it with `--start`):
+systemd (`/etc/systemd/system/papyrus.service`), for a checkout in a user's home directory. Run `python3 app.py`
+once as that user first to set everything up (that run only bootstraps; the service starts Papyrus with `--start`).
+Replace `youruser` with the account that owns the checkout:
 
 ```ini
 [Unit]
@@ -159,9 +160,9 @@ Description=Papyrus pastebin
 After=network.target
 
 [Service]
-User=papyrus
-WorkingDirectory=/opt/papyrus
-ExecStart=/opt/papyrus/.venv/bin/papyrus --start
+User=youruser
+WorkingDirectory=/home/youruser/papyrus
+ExecStart=/home/youruser/papyrus/.venv/bin/papyrus --start
 Restart=on-failure
 
 [Install]
