@@ -1570,7 +1570,9 @@ def test_footer_text_and_notice_can_be_switched_off_but_the_source_link_stays(cl
     footer = re.search(r'<footer class="site-footer">.*?</footer>', html, re.S).group(0)
     assert 'class="site-notice"' not in html
     assert footer == ('<footer class="site-footer">Source: <a href="https://github.com/TehPeGaSuS/papyrus" '
-                      'rel="noopener">https://github.com/TehPeGaSuS/papyrus</a></footer>')
+                      'rel="noopener">https://github.com/TehPeGaSuS/papyrus</a> '
+                      f'<span class="footer-sep" aria-hidden="true">&middot;</span> '
+                      f'<span class="footer-version">Papyrus {papyrus.__version__}</span></footer>')
 
 
 def test_the_source_link_follows_the_configured_footer_text(client):
@@ -1708,3 +1710,50 @@ def test_file_loading_is_client_side_and_text_only():
     assert 'FormData' not in js and "'/upload" not in js               # the file itself is never sent anywhere
     css = open(os.path.join(root, 'static', 'css', 'style.css'), encoding='utf-8').read()
     assert '.full-editor.drop-target' in css and '.file-note.error' in css
+
+
+# ── Version ───────────────────────────────────────────────────────────────────
+
+def test_the_version_is_semver_and_starts_at_1_0_0():
+    assert re.fullmatch(r'\d+\.\d+\.\d+', papyrus.__version__)
+    assert papyrus.__version__ == '1.0.0'
+
+
+def test_the_version_is_in_the_footer_of_every_page(client):
+    pid = create(client)['paste_id']
+    for path in ('/', f'/{pid}', '/admin/login', '/nothing-here-0000'):
+        footer = re.search(r'<footer class="site-footer">.*?</footer>', client.get(path).get_data(as_text=True), re.S).group(0)
+        assert footer.index('Source:') < footer.index('class="footer-version">Papyrus 1.0.0</span>'), path
+
+
+def test_the_version_stays_when_the_footer_text_is_switched_off(client, monkeypatch):
+    monkeypatch.setattr(papyrus, '_SITE_FOOTER', site_text(monkeypatch, 'footer', ''))
+    assert 'Papyrus 1.0.0' in client.get('/').get_data(as_text=True)
+
+
+def test_there_is_one_version_and_packaging_reads_it_from_app_py():
+    import ast
+    import tomllib
+    root = os.path.dirname(papyrus.__file__)
+    meta = tomllib.load(open(os.path.join(root, 'pyproject.toml'), 'rb'))
+    assert 'version' not in meta['project'] and meta['project']['dynamic'] == ['version']
+    assert meta['tool']['setuptools']['dynamic']['version'] == {'attr': 'app.__version__'}
+    # setuptools reads a plain literal from the source without importing it (Flask need not be installed)
+    tree = ast.parse(open(os.path.join(root, 'app.py'), encoding='utf-8').read())
+    literal = [n.value for n in tree.body if isinstance(n, ast.Assign)
+               and isinstance(n.targets[0], ast.Name) and n.targets[0].id == '__version__']
+    assert len(literal) == 1 and isinstance(literal[0], ast.Constant) and literal[0].value == papyrus.__version__
+
+
+def test_version_flag_prints_it_and_exits(capsys):
+    with pytest.raises(SystemExit) as exc:
+        papyrus._parse_args(['--version'])
+    assert exc.value.code == 0 and capsys.readouterr().out.strip() == 'Papyrus 1.0.0'
+
+
+def test_running_the_script_with_version_does_not_start_a_server():
+    import subprocess
+    root = os.path.dirname(papyrus.__file__)
+    run = subprocess.run([sys.executable, os.path.join(root, 'app.py'), '--version'], cwd=root, capture_output=True,
+                         text=True, timeout=60, env={**os.environ, 'SECRET_KEY': 'test-secret-key-not-for-production'})
+    assert run.returncode == 0 and run.stdout.strip() == 'Papyrus 1.0.0', (run.stdout, run.stderr)

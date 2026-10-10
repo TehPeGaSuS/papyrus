@@ -258,6 +258,12 @@ CREATE TABLE reports (
 .venv/bin/python -m pytest
 ```
 
+## Versioning
+
+Papyrus uses [semantic versioning](https://semver.org/). The version, shown in every page's footer and printed by
+`python3 app.py --version`, lives in one place: `__version__` in `app.py` (the package metadata reads it from there).
+To release: change it, commit, and tag the commit `vX.Y.Z`.
+
 ## Troubleshooting
 
 - **Port already in use**: `python3 app.py status`, or pick another with `--port`.

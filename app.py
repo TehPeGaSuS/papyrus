@@ -33,6 +33,8 @@ import time
 from contextlib import contextmanager
 from urllib.parse import urlsplit
 
+__version__ = '1.0.0'   # the one place the version lives; pyproject.toml reads it from here
+
 # ── First-run setup ───────────────────────────────────────────────────────────
 # Standard library only: this has to work before Flask is importable.
 
@@ -299,7 +301,8 @@ def inject_config():
     return {'cfg': CFG, 'csp_nonce': getattr(g, 'csp_nonce', ''),
             'reports_enabled': _reports_enabled(), 'is_admin': is_admin(),
             'palettes': _PALETTES, 'default_palette': _DEFAULT_PALETTE, 'theme_css_version': _THEME_CSS_VERSION,
-            'site_notice': _SITE_NOTICE, 'site_footer': _SITE_FOOTER, 'source_url': SOURCE_URL}
+            'site_notice': _SITE_NOTICE, 'site_footer': _SITE_FOOTER, 'source_url': SOURCE_URL,
+            'version': __version__}
 
 @app.template_filter('markdown')
 def markdown_filter(text):
@@ -1507,6 +1510,7 @@ def _parse_args(argv=None):
     parser.add_argument('-d', '--daemon', action='store_true', help='start in the background')
     parser.add_argument('--dev', action='store_true', help='use the Flask development server')
     parser.add_argument('--user', default='admin', help='admin username (with the admin command)')
+    parser.add_argument('--version', action='version', version=f'Papyrus {__version__}')
     parser.add_argument('--pid', help=argparse.SUPPRESS)
     return parser.parse_args(argv)
 

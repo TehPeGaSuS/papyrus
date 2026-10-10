@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "papyrus"
-version = "0.1.0"
+dynamic = ["version"]
 description = "A self-hosted pastebin with threaded Markdown discussions and an admin panel"
 readme = "README.md"
 license = { text = "MIT" }
@@ -29,3 +29,7 @@ papyrus = "app:main"
 # config.json live next to app.py), so it is installed in editable mode: `pip install -e .`
 [tool.setuptools]
 py-modules = ["app"]
+
+# The version is read from app.py (__version__ = "x.y.z") without importing it.
+[tool.setuptools.dynamic]
+version = { attr = "app.__version__" }
