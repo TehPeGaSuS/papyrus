@@ -1731,21 +1731,20 @@ def test_file_loading_is_client_side_and_text_only():
 
 # ── Version ───────────────────────────────────────────────────────────────────
 
-def test_the_version_is_semver_and_starts_at_1_0_0():
+def test_the_version_is_semver():
     assert re.fullmatch(r'\d+\.\d+\.\d+', papyrus.__version__)
-    assert papyrus.__version__ == '1.0.0'
 
 
 def test_the_version_is_in_the_footer_of_every_page(client):
     pid = create(client)['paste_id']
     for path in ('/', f'/{pid}', '/admin/login', '/nothing-here-0000'):
         footer = re.search(r'<footer class="site-footer">.*?</footer>', client.get(path).get_data(as_text=True), re.S).group(0)
-        assert footer.index('class="footer-version">Powered by Papyrus 1.0.0</span>') < footer.index('>Source</a>'), path
+        assert footer.index(f'class="footer-version">Powered by Papyrus {papyrus.__version__}</span>') < footer.index('>Source</a>'), path
 
 
 def test_the_version_stays_when_the_footer_text_is_switched_off(client, monkeypatch):
     monkeypatch.setattr(papyrus, '_SITE_FOOTER', site_text(monkeypatch, 'footer', ''))
-    assert 'Powered by Papyrus 1.0.0' in client.get('/').get_data(as_text=True)
+    assert f'Powered by Papyrus {papyrus.__version__}' in client.get('/').get_data(as_text=True)
 
 
 def test_there_is_one_version_and_packaging_reads_it_from_app_py():
@@ -1765,7 +1764,7 @@ def test_there_is_one_version_and_packaging_reads_it_from_app_py():
 def test_version_flag_prints_it_and_exits(capsys):
     with pytest.raises(SystemExit) as exc:
         papyrus._parse_args(['--version'])
-    assert exc.value.code == 0 and capsys.readouterr().out.strip() == 'Papyrus 1.0.0'
+    assert exc.value.code == 0 and capsys.readouterr().out.strip() == f'Papyrus {papyrus.__version__}'
 
 
 def test_running_the_script_with_version_does_not_start_a_server():
@@ -1773,7 +1772,7 @@ def test_running_the_script_with_version_does_not_start_a_server():
     root = os.path.dirname(papyrus.__file__)
     run = subprocess.run([sys.executable, os.path.join(root, 'app.py'), '--version'], cwd=root, capture_output=True,
                          text=True, timeout=60, env={**os.environ, 'SECRET_KEY': 'test-secret-key-not-for-production'})
-    assert run.returncode == 0 and run.stdout.strip() == 'Papyrus 1.0.0', (run.stdout, run.stderr)
+    assert run.returncode == 0 and run.stdout.strip() == f'Papyrus {papyrus.__version__}', (run.stdout, run.stderr)
 
 
 def test_one_time_notice_parameters_are_removed_from_the_address_bar():
