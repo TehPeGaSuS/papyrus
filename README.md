@@ -15,7 +15,7 @@ SQLite for storage, no build step.
   GitHub Gists; up to 10 by default (`pastes.max_files`). Each file has its own raw link and Markdown preview
 - **Load text files**: drop them on the editor (or use "open files") and the contents load straight in, with the
   filenames filled in (one file goes in the current card, several get a card each). It stays in your browser until
-  you save; only UTF-8 text up to the size limit is accepted
+  you paste; only UTF-8 text up to the size limit is accepted
 - **Gist-style editor**: description, filename (the extension picks the syntax highlighting), indent mode
   (spaces or tabs), indent size (2, 4, 8), no wrap (the default, like GitHub) or soft wrap, Tab/Shift+Tab indenting and auto-indent
 - **Markdown preview**: Markdown pastes (up to 256 KB) get a Source | Preview switch; `?view=preview` links straight to
@@ -241,7 +241,7 @@ the paste at once (as in PrivateBin and pinnwand), so don't post it where a link
 script, `curl -X POST <Removal URL>` does the same. In a browser you don't need the link: the browser that
 created the paste keeps a cookie, so the page shows **Remove now** to that browser whenever you come back
 (after a refresh, a closed tab or a restart), until the paste expires. Nobody else sees the button. The
-link is also shown once after saving, for removing the paste from another device.
+link is also shown once after pasting, for removing the paste from another device.
 
 ## API
 

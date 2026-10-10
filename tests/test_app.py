@@ -938,7 +938,7 @@ def test_the_old_terminal_forms_are_gone(client):
 
 def test_curl_endpoint_errors_are_plain_text(client):
     r = client.post('/', data={}, content_type='multipart/form-data')
-    assert (r.status_code, r.mimetype) == (400, 'text/plain') and 'Nothing to save' in r.get_data(as_text=True)
+    assert (r.status_code, r.mimetype) == (400, 'text/plain') and 'Nothing to paste' in r.get_data(as_text=True)
     r = upload(client, ('a.txt', b'a\x00b'))
     assert r.status_code == 415 and r.mimetype == 'text/plain'
     assert db().execute('SELECT COUNT(*) FROM pastes').fetchone()[0] == 0
@@ -1285,7 +1285,7 @@ def test_every_paste_control_lives_in_the_file_bar(client):
     for control in ('submitBtn', 'clearBtn', 'expires_in', 'allowComments', 'f-name', 'f-lang', 'f-indent-mode'):
         assert control not in top_bar, control
     # Per file: Filename | Language | Indent mode | Indent size | Wrap | Remove file. Per paste, below (script moves
-    # them into the first file's bar while there is one file): Add file | Expiry | Allow comments | Clear | Save
+    # them into the first file's bar while there is one file): Add file | Expiry | Allow comments | Clear | Paste
     order = [form.index(c) for c in ('f-name', 'f-lang', 'f-indent-mode', 'f-indent-size', 'f-wrap', 'f-remove', 'f-content',
                                      'id="addFileBtn"', 'id="expires_in"', 'id="allowComments"', 'id="clearBtn"', 'id="submitBtn"')]
     assert order == sorted(order)
@@ -2259,3 +2259,10 @@ def test_the_shipped_example_config_defaults_to_dark_and_comments_are_off():
 def test_the_os_theme_listener_only_applies_to_auto():
     js = open(os.path.join(os.path.dirname(papyrus.__file__), 'static', 'js', 'app.js'), encoding='utf-8').read()
     assert "configDefault === 'auto' && !localStorage.getItem('theme')" in js
+
+
+def test_the_create_button_says_paste_not_save(client):
+    html = client.get('/').get_data(as_text=True)
+    assert re.search(r'<button id="submitBtn"[^>]*>Paste</button>', html) and '>Save<' not in html
+    js = open(os.path.join(os.path.dirname(papyrus.__file__), 'static', 'js', 'paste_create.js'), encoding='utf-8').read()
+    assert "'Save'" not in js and 'submitLabel' in js                 # the label comes from the page

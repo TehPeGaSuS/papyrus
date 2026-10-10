@@ -4,7 +4,7 @@
  * Depends on: nothing but the DOM (app.js only supplies the theme toggle).
  *
  * A paste is one or more files, each in its own card (filename, language, indent mode and size, wrap, and
- * a textarea). Besides saving the paste it gives the plain textareas the editor basics from Gist-style
+ * a textarea). Besides posting the paste it gives the plain textareas the editor basics from Gist-style
  * editors: indent mode (spaces or tabs), indent size (2, 4, 8), soft or no wrap, Tab/Shift+Tab indenting,
  * and keeping the indentation of the previous line on Enter.
  */
@@ -13,6 +13,7 @@ document.addEventListener('DOMContentLoaded', function () {
     const $ = id => document.getElementById(id);
     const cardsBox    = $('cards');
     const submitBtn   = $('submitBtn');
+    const submitLabel = submitBtn.textContent;          // "Paste": put back after a failed attempt
     const addFileBtn  = $('addFileBtn');
     const pasteControls = $('pasteControls');
     const pasteBar    = $('pasteBar');
@@ -249,7 +250,7 @@ document.addEventListener('DOMContentLoaded', function () {
     syncLayout();
 
     // ── Load text files into the editor (drop them on the page, or open some) ──
-    // Nothing is uploaded: the browser reads each file and puts its text in a card, and what gets saved is the
+    // Nothing is uploaded: the browser reads each file and puts its text in a card, and what gets pasted is the
     // same plain-text paste as ever. Only UTF-8 text up to the paste size limit is accepted. One file goes
     // into the current card; several files get a card each.
     const maxBytes  = parseInt(first.querySelector('.f-content').dataset.maxBytes, 10) || 2 * 1024 * 1024;
@@ -401,7 +402,7 @@ document.addEventListener('DOMContentLoaded', function () {
             if (result.error) {
                 alert('Error: ' + result.error);
                 submitBtn.disabled    = false;
-                submitBtn.textContent = 'Save';
+                submitBtn.textContent = submitLabel;
                 return;
             }
             window.location.href = result.url + '?created=1';   // the removal cookie is already set
@@ -409,7 +410,7 @@ document.addEventListener('DOMContentLoaded', function () {
             console.error(err);
             alert('Failed to create paste. Try again.');
             submitBtn.disabled    = false;
-            submitBtn.textContent = 'Save';
+            submitBtn.textContent = submitLabel;
         }
     }
 });

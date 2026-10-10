@@ -1141,7 +1141,7 @@ def create_paste_upload():
         files.append({'content': text, 'filename': name or '',
                       'language': languages[len(files)] if len(files) < len(languages) else None})
     if not files:
-        return _text_response("Nothing to save. Send a file with -F 'file=@name', or pipe text in with "
+        return _text_response("Nothing to paste. Send a file with -F 'file=@name', or pipe text in with "
                               "-F 'file=@-'.\n", 400)
     data = {'files': files, 'content': None, 'title': form.get('title'),
             'expires_in': form.get('expires_in'), 'comments': _flag_or_none(form.get('comments'))}
