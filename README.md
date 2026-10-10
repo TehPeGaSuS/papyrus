@@ -212,18 +212,23 @@ your own account without root (on some distributions it needs `sudo loginctl ena
 `curl` works without a browser:
 
 ```bash
-$ echo "your text" | curl -X POST https://host/curl -F 'raw=<-'
+$ echo "your text" | curl -F 'file=@-' https://host/
 Paste URL:   https://host/3f9c1a7e2b4d
 Raw URL:     https://host/raw/3f9c1a7e2b4d
 Removal URL: https://host/remove/DQMUUD4K5ZIRTT62HLC26SPQD4
 
-$ curl -X POST https://host/curl -F 'raw=<file.py' -F filename=file.py -F expires_in=1day
+$ curl -F 'file=@file.py' https://host/                          # a file: its name is kept
+$ curl -F 'file=@file.py' -F title=notes -F expires_in=1day https://host/
+$ curl -F 'file=@main.py' -F 'file=@README.md' https://host/     # several files, one paste
+$ echo '# Notes' | curl -F 'file=@-;filename=notes.md' https://host/
 $ curl --data-binary @file.py 'https://host/create?filename=file.py&title=notes'   # same output
 ```
 
-Optional form fields for `/curl`: `filename` (picks the syntax highlighting), `title` (the description),
-`language`, `expires_in` and `discussions`. Repeat `-F raw=… -F filename=…` for a paste with several files (the
-reply then has one `Raw URL (<filename>)` line per file).
+The address itself takes the POST, so there is no endpoint to remember and curl needs no `-X POST` with `-F`.
+Optional form fields: `title` (the description), `language`, `expires_in` and `discussions`. Uploads are UTF-8
+text only and keep their filename (the extension picks the syntax highlighting). The older form still works:
+`curl -X POST https://host/curl -F 'raw=<file.py' -F filename=file.py`, repeating `raw` and `filename` for several
+files. With several files the reply has one `Raw URL (<filename>)` line per file.
 
 **Removing a paste.** The Removal URL is the only thing that removes it, so keep it. Opening it removes
 the paste at once (as in PrivateBin and pinnwand), so don't post it where a link-previewing bot would read it; from a
@@ -236,8 +241,9 @@ link is also shown once after saving, for removing the paste from another device
 
 - `GET /`: create-paste page
 - `GET /api`: a page on the site that explains the ways to post (curl, plain text, JSON), with this site's own address in the examples
-- `POST /curl`: create a paste from form fields (`raw`, optional `filename`, `title`, `language`, `expires_in`,
-  `discussions`); prints the paste, raw and removal URLs as plain text
+- `POST /` or `POST /curl`: create a paste from form fields: `file` uploads (repeat for more files) and/or `raw`
+  text, optional `filename`, `title`, `language`, `expires_in`, `discussions`; prints the paste, raw and removal URLs
+  as plain text
 - `POST /create`: the same from JSON (`content`, or `files`: a list of `{content, filename, language}` for several
   files; optional `title` (the description), `filename`, `language`
   (`auto` or omitted: detected from the filename), `expires_in`, `discussions`; answers with `paste_id`, `url`,

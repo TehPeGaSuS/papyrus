@@ -938,7 +938,7 @@ def test_curl_endpoint_also_takes_a_urlencoded_form(client):
 
 def test_curl_endpoint_errors_are_plain_text(client):
     r = client.post('/curl', data={})
-    assert (r.status_code, r.mimetype) == (400, 'text/plain') and 'content' in r.get_data(as_text=True)
+    assert (r.status_code, r.mimetype) == (400, 'text/plain') and 'Nothing to save' in r.get_data(as_text=True)
     r = client.post('/curl', data={'raw': 'a\x00b'})
     assert r.status_code == 415 and r.mimetype == 'text/plain'
     assert db().execute('SELECT COUNT(*) FROM pastes').fetchone()[0] == 0
@@ -1851,7 +1851,7 @@ def test_the_api_page_explains_the_ways_to_post(client):
     r = client.get('/api')
     html = __import__('html').unescape(r.get_data(as_text=True))
     assert r.status_code == 200
-    for text in ("curl -X POST http://localhost/curl -F 'raw=<-'", '--data-binary', 'application/json', '"files"',
+    for text in ("curl -F 'file=@-' http://localhost/", "curl -F 'file=@deploy.sh' http://localhost/", "curl -X POST http://localhost/curl -F 'raw=<deploy.sh'", '--data-binary', 'application/json', '"files"',
                  '/raw/<id>/<filename>', 'Removal URL', 'expires_in', '415', '429',
                  f'at most {papyrus._human_size(papyrus.MAX_PASTE_BYTES)}'):
         assert text in html, text
@@ -2104,3 +2104,74 @@ def test_code_is_never_shown_with_font_ligatures():
     css = open(os.path.join(os.path.dirname(papyrus.__file__), 'static', 'css', 'style.css'), encoding='utf-8').read()
     rule = re.search(r'pre, code, kbd, samp, textarea, \.removal-url \{([^}]*)\}', css).group(1)
     assert 'font-variant-ligatures: none' in rule and '"calt" 0' in rule        # <- must not turn into an arrow
+
+
+# ── Uploads with curl -F file=@... straight to the root URL ───────────────────
+
+def upload(client, *files, path='/', **fields):
+    """What `curl -F 'file=@name'` sends: multipart with a file part per upload."""
+    import io
+    data = {k: v for k, v in fields.items()}
+    parts = [(io.BytesIO(content if isinstance(content, bytes) else content.encode()), name) for name, content in files]
+    data['file'] = parts
+    return client.post(path, data=data, content_type='multipart/form-data')
+
+
+def test_a_file_upload_to_the_root_url_makes_a_paste_with_its_name(client):
+    r = upload(client, ('deploy.sh', '#!/bin/sh\necho hi\n'))
+    urls = curl_urls(r)
+    assert r.status_code == 200 and urls['Paste URL'] == f"http://localhost/{urls['Paste URL'].rsplit('/', 1)[1]}"
+    pid = urls['Paste URL'].rsplit('/', 1)[1]
+    row = stored(pid)
+    assert (row['filename'], row['language'], row['title'], row['content']) == ('deploy.sh', 'bash', 'deploy.sh', '#!/bin/sh\necho hi\n')
+    assert client.get(f'/raw/{pid}').get_data(as_text=True) == '#!/bin/sh\necho hi\n'
+
+
+def test_piping_into_file_at_dash_works_and_the_dash_is_not_a_filename(client):
+    r = upload(client, ('-', 'piped text\n'))                  # curl -F 'file=@-' names the part "-" (or nothing)
+    pid = curl_urls(r)['Paste URL'].rsplit('/', 1)[1]
+    assert stored(pid)['filename'] == '' and stored(pid)['content'] == 'piped text\n' and stored(pid)['title'] == 'Untitled'
+    r = upload(client, ('', 'no name at all\n'))
+    assert r.status_code == 200
+    r = upload(client, ('notes.md', '# hi\n'))                  # file=@-;filename=notes.md
+    assert stored(curl_urls(r)['Paste URL'].rsplit('/', 1)[1])['language'] == 'markdown'
+
+
+def test_several_uploads_make_a_multi_file_paste(client):
+    r = upload(client, ('a.py', 'print(1)\n'), ('b.sh', 'echo b\n'), title='Two')
+    text = r.get_data(as_text=True)
+    assert 'Raw URL (a.py)' in text and 'Raw URL (b.sh)' in text
+    pid = re.search(r'Paste URL:\s+\S+/([0-9a-f]+)', text).group(1)
+    assert client.get(f'/raw/{pid}/b.sh').get_data(as_text=True) == 'echo b\n' and stored(pid)['title'] == 'Two'
+
+
+def test_uploads_work_on_the_curl_endpoint_too_and_the_old_form_still_works(client):
+    assert upload(client, ('a.txt', 'x'), path='/curl').status_code == 200
+    r = client.post('/curl', data={'raw': 'text', 'filename': 'old.txt'}, content_type='multipart/form-data')
+    assert r.status_code == 200
+    r = client.post('/', data={'raw': 'to the root'}, content_type='multipart/form-data')
+    assert r.status_code == 200 and 'Paste URL' in r.get_data(as_text=True)
+    mixed = upload(client, ('up.txt', 'from a file'), raw='from a field')
+    assert mixed.status_code == 200 and 'Raw URL (' in mixed.get_data(as_text=True)
+
+
+def test_uploads_must_be_small_utf8_text(client, monkeypatch):
+    assert upload(client, ('blob.bin', b'\xff\xfe\x00\x01')).status_code == 415
+    assert upload(client, ('nul.txt', b'text\x00more')).status_code == 415
+    monkeypatch.setattr(papyrus, 'MAX_PASTE_BYTES', 50)
+    assert upload(client, ('big.txt', 'x' * 51)).status_code == 413
+    assert upload(client, ('ok.txt', 'x' * 50)).status_code == 200
+
+
+def test_posting_nothing_to_the_root_says_what_to_send(client):
+    r = client.post('/', data={'title': 'nothing'}, content_type='multipart/form-data')
+    assert r.status_code == 400 and "-F 'file=@name'" in r.get_data(as_text=True) and "file=@-" in r.get_data(as_text=True)
+    assert client.get('/').status_code == 200                    # the create page is still the root's GET
+
+
+def test_blocked_addresses_cannot_upload_to_the_root_either(client):
+    block(admin_client(), address='203.0.113.9', duration='never')
+    import io
+    r = client.post('/', data={'file': (io.BytesIO(b'x'), 'a.txt')}, content_type='multipart/form-data',
+                    environ_overrides={'REMOTE_ADDR': '127.0.0.1'}, headers={'X-Forwarded-For': '203.0.113.9'})
+    assert r.status_code == 403 and 'blocked' in r.get_data(as_text=True)

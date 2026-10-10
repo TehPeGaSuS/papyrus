@@ -17,18 +17,23 @@
        (keep that one private: opening it removes the paste).</p>
 
     <h2>From the shell</h2>
-    <p>Pipe anything in:</p>
-    {{ code('$ echo "your text" | curl -X POST ' ~ base ~ '/curl -F \'raw=<-\'\nPaste URL:   ' ~ base ~ '/3f9c1a7e2b4d\nRaw URL:     ' ~ base ~ '/raw/3f9c1a7e2b4d\nRemoval URL: ' ~ base ~ '/remove/…') }}
-    <p>Send a file, with a filename (its extension picks the syntax highlighting), a description and an expiry:</p>
-    {{ code("$ curl -X POST " ~ base ~ "/curl -F 'raw=<deploy.sh' -F filename=deploy.sh \\\n       -F title='Deploy helper' -F expires_in=" ~ example_expiry ~ " -F discussions=1") }}
+    <p>Pipe anything in (post to the address itself; curl needs no <code>-X POST</code> with <code>-F</code>):</p>
+    {{ code('$ echo "your text" | curl -F \'file=@-\' ' ~ base ~ '/\nPaste URL:   ' ~ base ~ '/3f9c1a7e2b4d\nRaw URL:     ' ~ base ~ '/raw/3f9c1a7e2b4d\nRemoval URL: ' ~ base ~ '/remove/…') }}
+    <p>Send a file. Its name is kept, and its extension picks the syntax highlighting:</p>
+    {{ code("$ curl -F 'file=@deploy.sh' " ~ base ~ "/") }}
+    <p>Add a description, an expiry and comments. Name piped text with <code>;filename=</code>:</p>
+    {{ code("$ curl -F 'file=@deploy.sh' -F title='Deploy helper' -F expires_in=" ~ example_expiry ~ " -F discussions=1 " ~ base ~ "/\n$ echo '# Notes' | curl -F 'file=@-;filename=notes.md' " ~ base ~ "/") }}
+    <p>The older form still works too: <code>-F 'raw=&lt;file'</code> (the text as a field) to <code>/curl</code>, with <code>-F filename=…</code>.</p>
+    {{ code("$ curl -X POST " ~ base ~ "/curl -F 'raw=<deploy.sh' -F filename=deploy.sh") }}
     <p>The same, sending the file as the request body (options go in the query string):</p>
     {{ code("$ curl --data-binary @deploy.sh -H 'Content-Type: text/plain' \\\n       '" ~ base ~ "/create?filename=deploy.sh&title=Deploy+helper'") }}
 
     <h3>Form and query fields</h3>
     <table>
         <tr><th>Field</th><th>Meaning</th></tr>
-        <tr><td><code>raw</code></td><td>the text (form field of <code>/curl</code>; the request body of <code>/create</code>)</td></tr>
-        <tr><td><code>filename</code></td><td>optional; the extension picks the language and the paste is titled after it</td></tr>
+        <tr><td><code>file</code></td><td>a file upload (<code>-F 'file=@name'</code>, or <code>@-</code> for standard input); repeat it for more files. UTF-8 text only</td></tr>
+        <tr><td><code>raw</code></td><td>the text itself, as a field (<code>-F 'raw=&lt;name'</code>), or the request body of <code>/create</code></td></tr>
+        <tr><td><code>filename</code></td><td>optional with <code>raw</code>; the extension picks the language and the paste is titled after it. Uploads bring their own name</td></tr>
         <tr><td><code>title</code></td><td>optional description</td></tr>
         <tr><td><code>language</code></td><td>optional; <code>auto</code> or omitted means "from the filename". Names: <a href="{{ url_for('get_languages') }}"><code>/api/languages</code></a></td></tr>
         <tr><td><code>expires_in</code></td><td>optional, one of the values below (default <code>{{ default_expiry }}</code>)</td></tr>
@@ -36,8 +41,8 @@
     </table>
 
     <h2>Several files in one paste</h2>
-    <p>Repeat <code>raw</code> and <code>filename</code> for each file, up to {{ max_files }} files. The reply has one raw URL per file.</p>
-    {{ code("$ curl -X POST " ~ base ~ "/curl -F 'raw=<main.py' -F filename=main.py \\\n       -F 'raw=<README.md' -F filename=README.md\nPaste URL:   " ~ base ~ "/3f9c1a7e2b4d\nRaw URL (main.py):   " ~ base ~ "/raw/3f9c1a7e2b4d\nRaw URL (README.md): " ~ base ~ "/raw/3f9c1a7e2b4d/README.md\nRemoval URL: " ~ base ~ "/remove/…") }}
+    <p>Repeat <code>file</code> for each file, up to {{ max_files }} files. The reply has one raw URL per file.</p>
+    {{ code("$ curl -F 'file=@main.py' -F 'file=@README.md' " ~ base ~ "/\nPaste URL:   " ~ base ~ "/3f9c1a7e2b4d\nRaw URL (main.py):   " ~ base ~ "/raw/3f9c1a7e2b4d\nRaw URL (README.md): " ~ base ~ "/raw/3f9c1a7e2b4d/README.md\nRemoval URL: " ~ base ~ "/remove/…") }}
 
     <h2>JSON</h2>
     <p><code>POST /create</code> with <code>Content-Type: application/json</code>. One file:</p>

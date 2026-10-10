@@ -916,8 +916,10 @@ def _prism_language(language):
 
 # ── Routes ────────────────────────────────────────────────────────────────────
 
-@app.route('/')
+@app.route('/', methods=['GET', 'POST'])
 def index():
+    if request.method == 'POST':               # curl -F 'file=@deploy.sh' https://host/
+        return create_paste_curl()
     return render_template('index.html', language_hints=_language_hints(), max_paste_bytes=MAX_PASTE_BYTES,
                            expiry_options=_EXPIRY_OPTIONS, default_expiry=_DEFAULT_EXPIRY, max_files=MAX_FILES)
 
@@ -1100,8 +1102,9 @@ def api_docs():
 
 @app.route('/curl', methods=['POST'])
 def create_paste_curl():
-    """`echo hi | curl -X POST https://host/curl -F 'raw=<-'`, plus optional filename, title, language,
-    expires_in and discussions fields. Prints the paste, raw and removal URLs."""
+    """`echo hi | curl -F 'file=@-' https://host/` (also POST /curl): files are uploads in `file` fields, or text
+    in `raw` fields, plus optional filename, title, language, expires_in and discussions. Prints the paste,
+    raw and removal URLs."""
     if _is_blocked(_client_ip()):
         return _text_response(_BLOCKED_MESSAGE + '\n', 403)
     if not _check_rate_limit(_client_ip(), key_prefix='create', limit=10):
@@ -1111,7 +1114,22 @@ def create_paste_curl():
     # Repeat the fields for more files: -F 'raw=<a.py' -F filename=a.py -F 'raw=<b.sh' -F filename=b.sh
     files = [{'content': raw, 'filename': names[i] if i < len(names) else '',
               'language': languages[i] if i < len(languages) else None} for i, raw in enumerate(raws)]
-    data = {'files': files or None, 'content': None, 'title': form.get('title'),
+    for upload in request.files.getlist('file'):       # -F 'file=@a.py' -F 'file=@b.sh': one file each
+        text = upload.stream.read(MAX_PASTE_BYTES + 1)
+        if len(text) > MAX_PASTE_BYTES:
+            return _text_response('Paste too large\n', 413)
+        try:
+            text = text.decode('utf-8')
+        except UnicodeDecodeError:
+            return _text_response('Only UTF-8 text is accepted\n', 415)
+        index = len(files)
+        name = upload.filename if upload.filename not in (None, '', '-') else (names[index] if index < len(names) else '')
+        files.append({'content': text, 'filename': name,
+                      'language': languages[index] if index < len(languages) else None})
+    if not files:
+        return _text_response("Nothing to save. Send a file with -F 'file=@name', or pipe text in with "
+                              "-F 'file=@-' (or -F 'raw=<-').\n", 400)
+    data = {'files': files, 'content': None, 'title': form.get('title'),
             'expires_in': form.get('expires_in'), 'discussions': _flag(form.get('discussions'))}
     try:
         paste_id, token, _, stored = _store_paste(data, _client_ip())
