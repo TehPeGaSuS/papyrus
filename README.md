@@ -75,7 +75,7 @@ no `config.json`. Restart after changing it.
 - `site.footer`: a line of text at the bottom of every page (the shipped one says the site claims no ownership of,
   and has no liability for, what people paste). `site.notice`: an optional banner under the top bar, off by default.
   Both are inline Markdown, so `[links](https://example.org)` and `**emphasis**` work and raw HTML is escaped; leave
-  either empty to hide it. The footer always ends with a link to the project's source
+  either empty to hide it. The footer always ends with `Powered by Papyrus <version> · Source` (the link goes to the project's source)
 - `theme.palettes`, `theme.palette`: the colour themes visitors can pick from the dropdown next to the light/dark
   toggle, and the default one (rust). See below
 - `features.show_recent`: enable the `/recent` page
@@ -175,9 +175,9 @@ $ curl --data-binary @file.py 'https://host/create?filename=file.py&title=notes'
 Optional form fields for `/curl`: `filename` (picks the syntax highlighting), `title` (the description),
 `language`, `expires_in` and `discussions`.
 
-**Removing a paste.** The Removal URL is the only thing that removes it, so keep it. Opening it asks
-"Remove this paste?" and nothing happens until you confirm, so a link preview can't delete anything; with
-`curl`, `curl -X POST <Removal URL>` removes it. In a browser you don't need the link: the browser that
+**Removing a paste.** The Removal URL is the only thing that removes it, so keep it. Opening it removes
+the paste at once (as in PrivateBin and pinnwand), so don't post it where a link-previewing bot would read it; from a
+script, `curl -X POST <Removal URL>` does the same. In a browser you don't need the link: the browser that
 created the paste keeps a cookie, so the page shows **Remove now** to that browser whenever you come back
 (after a refresh, a closed tab or a restart), until the paste expires. Nobody else sees the button. The
 link is also shown once after saving, for removing the paste from another device.
