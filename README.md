@@ -150,7 +150,7 @@ believes them only from a proxy on the same machine (`server.trusted_proxy_ips`)
 reaches the app directly can't forge them. Keep it bound to `127.0.0.1` and set `"use_https": true`
 when serving over TLS. [`webserver/README.md`](webserver/README.md) has the details and a quick check.
 
-systemd (`/etc/systemd/system/papyrus.service`), for a checkout in a user's home directory. Run `python3 app.py`
+A systemd system service (`/etc/systemd/system/papyrus.service`), for a checkout in a user's home directory. Run `python3 app.py`
 once as that user first to set everything up (that run only bootstraps; the service starts Papyrus with `--start`).
 Replace `youruser` with the account that owns the checkout:
 
@@ -167,6 +167,29 @@ Restart=on-failure
 
 [Install]
 WantedBy=multi-user.target
+```
+
+Or as a systemd **user** unit, which needs no root. Save it as `~/.config/systemd/user/papyrus.service` (for a
+checkout in `~/papyrus`; `%h` is your home directory):
+
+```ini
+[Unit]
+Description=Papyrus pastebin
+
+[Service]
+WorkingDirectory=%h/papyrus
+ExecStart=%h/papyrus/.venv/bin/papyrus --start
+Restart=on-failure
+
+[Install]
+WantedBy=default.target
+```
+
+```bash
+systemctl --user daemon-reload
+systemctl --user enable --now papyrus
+loginctl enable-linger "$USER"        # keep it running after you log out, and start it at boot
+systemctl --user status papyrus       # logs: journalctl --user -u papyrus
 ```
 
 ## Usage

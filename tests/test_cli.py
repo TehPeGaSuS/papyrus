@@ -420,3 +420,12 @@ def test_start_is_in_the_help():
     args = papyrus._parse_args(['--start'])
     assert args.start is True and args.command is None
     assert papyrus._parse_args([]).start is False
+
+
+def test_the_readme_units_start_the_papyrus_command_with_start():
+    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    readme = open(os.path.join(root, 'README.md'), encoding='utf-8').read()
+    lines = [l for l in readme.splitlines() if l.startswith('ExecStart=')]
+    assert len(lines) == 2 and all(l.endswith('/.venv/bin/papyrus --start') for l in lines)
+    assert 'WantedBy=default.target' in readme and 'enable-linger' in readme          # the user unit
+    assert 'papyrus = ' in open(os.path.join(root, 'pyproject.toml'), encoding='utf-8').read()   # the command exists
