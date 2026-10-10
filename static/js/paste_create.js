@@ -15,8 +15,6 @@ document.addEventListener('DOMContentLoaded', function () {
     const submitBtn   = $('submitBtn');
     const submitLabel = submitBtn.textContent;          // "Paste": put back after a failed attempt
     const addFileBtn  = $('addFileBtn');
-    const pasteControls = $('pasteControls');
-    const pasteBar    = $('pasteBar');
     const maxFiles    = parseInt(cardsBox.dataset.maxFiles, 10) || 1;
 
     const store = {
@@ -216,9 +214,6 @@ document.addEventListener('DOMContentLoaded', function () {
         cardsBox.classList.toggle('multi', multi);
         all.forEach(card => { parts(card).remove.hidden = !multi; });      // "Remove file" only with 2 or more files
         addFileBtn.hidden = all.length >= maxFiles;
-        // The paste-level controls: in the first file's bar for one file, in their own bar below the cards for several.
-        if (multi) { pasteBar.hidden = false; pasteBar.appendChild(pasteControls); }
-        else { pasteBar.hidden = true; all[0].querySelector('.editor-bar').appendChild(pasteControls); }
     }
 
     function addCard() {

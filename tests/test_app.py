@@ -1284,10 +1284,10 @@ def test_every_paste_control_lives_in_the_file_bar(client):
     assert top_bar.index('class="brand"') < top_bar.index('id="title"') < top_bar.index('id="themeToggle"')
     for control in ('submitBtn', 'clearBtn', 'expires_in', 'allowComments', 'f-name', 'f-lang', 'f-indent-mode'):
         assert control not in top_bar, control
-    # Per file: Filename | Language | Indent mode | Indent size | Wrap | Remove file. Per paste, below (script moves
-    # them into the first file's bar while there is one file): Add file | Expiry | Allow comments | Clear | Paste
+    # Per file: Filename | Language | Indent mode | Indent size | Wrap | Remove file. Per paste, in a bar below the
+    # files (always, as in pinnwand): Expires | Allow comments | Clear | Paste ......... Add another file
     order = [form.index(c) for c in ('f-name', 'f-lang', 'f-indent-mode', 'f-indent-size', 'f-wrap', 'f-remove', 'f-content',
-                                     'id="addFileBtn"', 'id="expires_in"', 'id="allowComments"', 'id="clearBtn"', 'id="submitBtn"')]
+                                     'id="expires_in"', 'id="allowComments"', 'id="clearBtn"', 'id="submitBtn"', 'id="addFileBtn"')]
     assert order == sorted(order)
     assert 'Allow comments' in form and not re.search(r'>\s*Discuss\s*<|> Discuss\b', html)   # the old label is gone
     assert 'Control+Shift+M' in form
@@ -2266,3 +2266,15 @@ def test_the_create_button_says_paste_not_save(client):
     assert re.search(r'<button id="submitBtn"[^>]*>Paste</button>', html) and '>Save<' not in html
     js = open(os.path.join(os.path.dirname(papyrus.__file__), 'static', 'js', 'paste_create.js'), encoding='utf-8').read()
     assert "'Save'" not in js and 'submitLabel' in js                 # the label comes from the page
+
+
+def test_the_paste_bar_is_below_the_files_with_add_another_file_at_the_far_end(client):
+    html = client.get('/').get_data(as_text=True)
+    bar = re.search(r'<div class="editor-bar paste-bar" id="pasteBar">(.*?)\n</div>', html, re.S).group(1)
+    assert html.index('id="cards"') < html.index('id="pasteBar"') and 'hidden' not in html.split('id="pasteBar"')[1].split('>')[0]
+    assert 'class="editor-bar-spacer"' in bar and bar.index('id="submitBtn"') < bar.index('editor-bar-spacer') < bar.index('id="addFileBtn"')
+    assert '>Add another file</button>' in bar and 'Add file<' not in html
+    cards = html.split('id="cards"')[1].split('<template')[0]
+    assert 'submitBtn' not in cards and 'addFileBtn' not in cards                # nothing paste-level inside the first card
+    js = open(os.path.join(os.path.dirname(papyrus.__file__), 'static', 'js', 'paste_create.js'), encoding='utf-8').read()
+    assert 'appendChild(pasteControls)' not in js and 'pasteControls' not in js     # and the script no longer moves it around

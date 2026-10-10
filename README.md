@@ -11,7 +11,7 @@ SQLite for storage, no build step.
   (`![alt](url)`) are shown as plain links, never embedded. The only images the site serves are its
   own logo and icons
 - **Paste and share**: short links (`/<id>`), raw text at `/raw/<id>`, `curl` uploads, download as a file
-- **Several files per paste**: "Add file" gives each file its own card (filename, language, indent options), like
+- **Several files per paste**: "Add another file" gives each file its own card (filename, language, indent options), like
   GitHub Gists; up to 10 by default (`pastes.max_files`). Each file has its own raw link and Markdown preview
 - **Load text files**: drop them on the editor (or use "open files") and the contents load straight in, with the
   filenames filled in (one file goes in the current card, several get a card each). It stays in your browser until

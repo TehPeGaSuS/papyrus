@@ -714,11 +714,7 @@ a.comment-reply:hover { text-decoration: underline; color: var(--primary); }
 .file-editors.multi .file-editor { flex: none; border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; }
 .file-editors.multi .editor-bar { border-top: none; }
 .file-editors.multi .full-editor { flex: none; height: 16rem; }
-/* The paste-level controls (Add file, Expires, Allow comments, Clear, Save) live in the first file's bar while there is
-   one file, and in a bar of their own below the cards once there are several. */
-.paste-controls { display: contents; }
-.paste-controls .bar-field-first { margin-left: auto; }
-.paste-bar > .paste-controls { display: contents; }
+/* The paste-level bar, always below the files: Expires | Allow comments | Clear | Paste ......... Add another file */
 .paste-bar { justify-content: flex-start; }
 
 /* ── API page ─────────────────────────────────────────────────────────────── */
