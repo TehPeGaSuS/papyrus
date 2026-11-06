@@ -21,7 +21,7 @@ SQLite for storage, no build step.
 - **Markdown preview**: Markdown pastes (up to 256 KB) get a Source | Preview switch; `?view=preview` links straight to
   the rendered version. It is sanitised like comments, so raw HTML is shown as text, never parsed, and HTML pastes are
   never rendered
-- **Syntax highlighting** with Prism.js, line numbers, line-range links (`?L=5-12`), word wrap toggle
+- **Syntax highlighting** with Prism.js for about 290 languages, line numbers, line-range links (`?L=5-12`), word wrap toggle
 - **Expiry**: pastes are temporary: 1 hour, 1 day, 1 week or 1 month, one week by default (configurable)
 - **Threaded comments**: optional per-paste comments and nested replies, each in its own box,
   written in Markdown (code fences, tables, links) with a Write/Preview tab. Rendered and sanitised
@@ -104,6 +104,11 @@ no `config.json`. Restart after changing it.
   toggle, and the default one (rust). See below
 - `features.show_recent`: enable the `/recent` page
 - `features.reports`: allow reporting (default `true`; also needs the admin panel, since someone has to read them)
+- `languages` and `features.more_languages`: the `languages` list is shown first in the language menu, in its order
+  and with its names. With `more_languages` (default `true`) the menu also offers every other language Prism
+  highlights (about 260 more, under **More languages**); set it to `false` to offer only your list. A paste page
+  loads just the extra highlighters it needs, each pinned with its cdnjs `integrity` hash from `prism_languages.json`
+  (regenerate that file with `python3 tools/update_prism_languages.py <version>` when changing the Prism version)
 - `admin.*`: managed by `python3 app.py admin`
 - `database.path`: SQLite file, relative to the project directory (default `papyrus.db`)
 

@@ -810,10 +810,90 @@ def test_detect_language(name, language):
 
 def test_detection_only_returns_languages_the_site_offers(monkeypatch):
     monkeypatch.setitem(papyrus.CFG, 'languages', [{'value': 'text', 'name': 'Text'}, {'value': 'python', 'name': 'Python'}])
+    monkeypatch.setattr(papyrus, '_MORE_LANGUAGES', False)
     assert papyrus._detect_language('x.py') == 'python'
     assert papyrus._detect_language('x.sh') is None
     hints = papyrus._language_hints()
     assert set(hints['extensions'].values()) <= {'text', 'python'} and 'sh' not in hints['extensions']
+
+
+@pytest.mark.parametrize('name,language', [
+    ('bot.tcl', 'tcl'), ('init.lua', 'lua'), ('Makefile', 'makefile'), ('CMakeLists.txt', 'cmake'),
+    ('.htaccess', 'apacheconf'), ('soju.service', 'systemd'),
+])
+def test_more_languages_are_detected_too(name, language):
+    assert papyrus._detect_language(name) == language
+
+
+# ── Prism languages ───────────────────────────────────────────────────────────
+
+def script_tags(html):
+    """{src: integrity} for every cdnjs <script> on a page."""
+    tags = re.findall(r'<script src="(https://cdnjs[^"]+)"([^>]*)>', html)
+    return {src: (re.search(r'integrity="([^"]+)"', attrs) or [None, None])[1] for src, attrs in tags}
+
+
+def test_prism_data_is_consistent():
+    data = papyrus._PRISM
+    langs = data['languages']
+    assert len(langs) > 250 and set(data['core_languages']) <= set(langs)
+    for lang, entry in langs.items():
+        assert entry['sri'].startswith('sha512-'), lang
+        assert set(entry['require']) <= set(langs), lang
+
+
+def test_language_menu_lists_the_configured_languages_first():
+    choices = papyrus._language_choices()
+    configured = [{'value': e['value'], 'name': e['name']} for e in papyrus.CFG['languages']]
+    assert choices[:len(configured)] == configured
+    more = choices[len(configured):]
+    assert more and all(c['more'] for c in more)
+    values = [c['value'] for c in choices]
+    assert len(values) == len(set(values))
+    assert 'tcl' in values and 'markup' not in values                 # html/xml in the list already mean markup
+    assert not set(values) & papyrus._PRISM_HELPERS                    # no clike, markup-templating, ...
+    assert [c['name'].lower() for c in more] == sorted(c['name'].lower() for c in more)
+
+
+def test_language_menu_can_be_limited_to_the_configured_list(client, monkeypatch):
+    monkeypatch.setattr(papyrus, '_MORE_LANGUAGES', False)
+    assert client.get('/api/languages').get_json() == [{'value': e['value'], 'name': e['name']} for e in papyrus.CFG['languages']]
+    assert papyrus._detect_language('bot.tcl') is None
+
+
+def test_api_languages_offers_prism_languages(client):
+    langs = client.get('/api/languages').get_json()
+    assert {'value': 'tcl', 'name': 'Tcl', 'more': True} in langs
+
+
+def test_every_page_pins_its_prism_scripts(client):
+    for html in (client.get('/').get_data(as_text=True), client.get('/api').get_data(as_text=True)):
+        tags = script_tags(html)
+        components = [src for src in tags if '/components/' in src]
+        assert components and all(tags[src] for src in tags if '/plugins/' not in src)
+        assert not any(src.endswith('/prism-lua.min.js') for src in components)    # only what a page needs
+
+
+def test_paste_page_loads_the_highlighter_it_needs(client):
+    pid = create(client, content='print("hi")', language='lua')['paste_id']
+    tags = script_tags(client.get(f'/{pid}').get_data(as_text=True))
+    lua = [src for src in tags if src.endswith('/components/prism-lua.min.js')]
+    assert lua and tags[lua[0]] == papyrus._PRISM_LANGS['lua']['sri']
+
+
+def test_requirements_load_before_the_language(monkeypatch):
+    monkeypatch.setitem(papyrus.CFG, 'languages', [{'value': 'text', 'name': 'Text'}])
+    names = [s['src'].rsplit('/prism-', 1)[1][:-len('.min.js')] for s in papyrus._prism_scripts(['cpp', 'php', 'cpp'])]
+    assert names == ['c', 'cpp', 'markup-templating', 'php']
+    assert papyrus._prism_scripts(['javascript', 'html', 'nonsense', 'py']) == [papyrus._prism_scripts(['python'])[0]]
+
+
+def test_markdown_code_blocks_load_their_highlighters(client):
+    pid = create(client, filename='notes.md', content='# Notes\n\n```nix\n{ }\n```\n', comments=True)['paste_id']
+    comment(client, pid, 'try:\n\n~~~ zig\nconst x = 1;\n~~~')
+    srcs = script_tags(client.get(f'/{pid}').get_data(as_text=True))
+    assert any(s.endswith('/prism-nix.min.js') for s in srcs)
+    assert any(s.endswith('/prism-zig.min.js') for s in srcs)
 
 
 def stored(pid):

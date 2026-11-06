@@ -314,7 +314,10 @@ def inject_config():
             'palettes': _PALETTES, 'default_palette': _DEFAULT_PALETTE, 'theme_css_version': _THEME_CSS_VERSION,
             'theme_default': _THEME_DEFAULT,
             'site_notice': _SITE_NOTICE, 'site_footer': _SITE_FOOTER, 'source_url': SOURCE_URL,
-            'version': __version__}
+            'version': __version__,
+            # Paste pages pass their own prism_scripts (adding the languages they need).
+            'prism_core': {'src': f'{_PRISM_CDN}prism.min.js', 'integrity': _PRISM['core_sri']},
+            'prism_scripts': _prism_scripts()}
 
 @app.template_filter('markdown')
 def markdown_filter(text):
@@ -707,7 +710,65 @@ def _clean_filename(value):
     name = _CONTROL_CHARS_RE.sub('', value).replace('\\', '/').rsplit('/', 1)[-1].strip()
     return name[:MAX_FILENAME_LENGTH]
 
-# File extension -> language. Only languages listed in config.json are ever returned.
+# ── Syntax highlighting (Prism) ──────────────────────────────────────────────
+# prism_languages.json (from tools/update_prism_languages.py) lists every language Prism has,
+# with the components each one needs and the cdnjs SRI hash of each file. Pages load the
+# languages in config.json's "languages" list, as before, plus whatever else a paste needs,
+# and every script keeps its integrity hash.
+with open(os.path.join(os.path.dirname(__file__), 'prism_languages.json'), encoding='utf-8') as _f:
+    _PRISM = json.load(_f)
+_PRISM_LANGS   = _PRISM['languages']
+_PRISM_ALIASES = {alias: lang for lang, entry in _PRISM_LANGS.items() for alias in entry['aliases']}
+_PRISM_CDN     = f"https://cdnjs.cloudflare.com/ajax/libs/prism/{_PRISM['version']}/"
+# Components that only support other languages (templating, doc comments, "extras") aren't offered.
+_PRISM_HELPERS = {'clike', 'css-extras', 'javadoc', 'javadoclike', 'js-extras', 'js-templates', 'jsdoc',
+                  'markup-templating', 'php-extras', 'phpdoc', 't4-templating', 'xml-doc'}
+# features.more_languages: false offers only the "languages" list from config.json.
+_MORE_LANGUAGES = bool(_feat.get('more_languages', True))
+
+# Prism language ids differ from ours for a few languages; False = no highlighting.
+_PRISM_LANG_MAP = {'text': False, 'html': 'markup', 'xml': 'markup'}
+
+def _prism_language(language):
+    return _PRISM_LANG_MAP.get(language, language)
+
+def _featured_languages():
+    return [{'value': e['value'], 'name': e['name']} for e in CFG.get('languages', [])]
+
+def _language_choices():
+    """The language menu: config.json's list first, then (unless turned off) the rest of Prism's."""
+    featured = _featured_languages()
+    if not _MORE_LANGUAGES:
+        return featured
+    taken = {e['value'] for e in featured} | {_prism_language(e['value']) for e in featured}
+    more = [{'value': lang, 'name': entry['title'], 'more': True} for lang, entry in _PRISM_LANGS.items()
+            if lang not in taken and lang not in _PRISM_HELPERS]
+    return featured + sorted(more, key=lambda e: e['name'].lower())
+
+def _prism_scripts(languages=()):
+    """The Prism component <script>s (src + integrity) for the configured languages plus `languages`,
+    each after the components it requires. Unknown names are skipped; prism.min.js already has the core ones."""
+    loaded, scripts = set(_PRISM['core_languages']), []
+    def add(name):
+        lang = _PRISM_ALIASES.get(name, name)
+        if lang in loaded or lang not in _PRISM_LANGS:
+            return
+        loaded.add(lang)
+        for dep in _PRISM_LANGS[lang]['require']:
+            add(dep)
+        scripts.append({'src': f'{_PRISM_CDN}components/prism-{lang}.min.js', 'integrity': _PRISM_LANGS[lang]['sri']})
+    for name in [_prism_language(e['value']) for e in _featured_languages()] + list(languages):
+        if name:
+            add(name)
+    return scripts
+
+# A fenced code block's language in Markdown (```lua); the sanitiser only keeps lowercase ones.
+_FENCE_LANGUAGE_RE = re.compile(r'^[ \t]{0,3}(?:`{3,}|~{3,})[ \t]*([a-z0-9_+-]{1,32})', re.M)
+
+def _fence_languages(text):
+    return _FENCE_LANGUAGE_RE.findall(text or '')
+
+# File extension -> language. Only languages this site offers are ever returned.
 _EXTENSION_LANGUAGES = {
     'js': 'javascript', 'mjs': 'javascript', 'cjs': 'javascript', 'jsx': 'javascript',
     'ts': 'typescript', 'tsx': 'typescript', 'py': 'python', 'pyw': 'python', 'java': 'java',
@@ -718,12 +779,23 @@ _EXTENSION_LANGUAGES = {
     'go': 'go', 'rs': 'rust', 'swift': 'swift', 'kt': 'kotlin', 'kts': 'kotlin',
     'md': 'markdown', 'markdown': 'markdown', 'diff': 'diff', 'patch': 'diff',
     'toml': 'toml', 'ini': 'ini', 'cfg': 'ini', 'txt': 'text', 'log': 'text',
+    # Only used when features.more_languages is on (or the language is in config.json):
+    'tcl': 'tcl', 'lua': 'lua', 'pl': 'perl', 'pm': 'perl', 'r': 'r', 'hs': 'haskell',
+    'ex': 'elixir', 'exs': 'elixir', 'erl': 'erlang', 'clj': 'clojure', 'scala': 'scala',
+    'dart': 'dart', 'zig': 'zig', 'nim': 'nim', 'nix': 'nix', 'tf': 'hcl', 'hcl': 'hcl',
+    'vim': 'vim', 'cmake': 'cmake', 'mk': 'makefile', 'pas': 'pascal', 'f90': 'fortran',
+    'groovy': 'groovy', 'gradle': 'groovy', 'service': 'systemd', 'jl': 'julia', 'ml': 'ocaml',
+    'sol': 'solidity', 'proto': 'protobuf', 'graphql': 'graphql', 'gql': 'graphql',
+    'tex': 'latex', 'bat': 'batch', 'cmd': 'batch', 'awk': 'awk', 'asm': 'nasm',
 }
 _FILENAME_LANGUAGES = {'dockerfile': 'docker', 'nginx.conf': 'nginx', '.bashrc': 'bash',
-                       '.zshrc': 'bash', '.profile': 'bash'}
+                       '.zshrc': 'bash', '.profile': 'bash', 'makefile': 'makefile',
+                       'cmakelists.txt': 'cmake', '.vimrc': 'vim', 'gemfile': 'ruby',
+                       'rakefile': 'ruby', 'jenkinsfile': 'groovy', 'apache2.conf': 'apacheconf',
+                       '.htaccess': 'apacheconf'}
 
 def _supported_languages():
-    return {entry['value'] for entry in CFG.get('languages', [])}
+    return {entry['value'] for entry in _language_choices()}
 
 def _detect_language(filename):
     """Language for a filename, or None when it isn't recognised."""
@@ -931,12 +1003,6 @@ SOURCE_URL = 'https://github.com/TehPeGaSuS/papyrus'
 
 _SITE_NOTICE = _render_site_text('notice')
 _SITE_FOOTER = _render_site_text('footer')
-
-# Prism language ids differ from ours for a few languages; False = no highlighting.
-_PRISM_LANG_MAP = {'text': False, 'html': 'markup', 'xml': 'markup'}
-
-def _prism_language(language):
-    return _PRISM_LANG_MAP.get(language, language)
 
 # ── Routes ────────────────────────────────────────────────────────────────────
 
@@ -1204,13 +1270,20 @@ def view_paste(paste_id):
             'preview_html': Markup(render_markdown(content)) if previewable else None,
             'raw_path': _file_raw_path(paste_id, f['position'], f['filename']),
         })
+    # Highlighting for every file, and for the code blocks in rendered Markdown files and comments
+    needed = [f['prism_lang'] for f in files if f['prism_lang']]
+    for f in files:
+        if f['preview_html'] is not None:
+            needed += _fence_languages(f['content'])
+    for row in rows:
+        needed += _fence_languages(row['content'])
     highlight = request.args.get('f', '')
     cookie = request.cookies.get('removal', '')
     owner = bool(cookie) and len(cookie) < 200 and bool(paste['removal_hash']) \
         and hmac.compare_digest(_hash_token(cookie), paste['removal_hash'])
     return render_template('view.html', paste=paste, comments=_comment_tree(rows),
                            removal_token=cookie if owner else None,
-                           comment_count=len(rows), files=files,
+                           comment_count=len(rows), files=files, prism_scripts=_prism_scripts(needed),
                            comments_on=_COMMENTS_ENABLED and bool(paste['comments_enabled']),
                            show_preview=request.args.get('view') == 'preview',
                            highlight_file=int(highlight) if highlight.isdigit() and 0 < int(highlight) <= len(files) else 1)
@@ -1230,7 +1303,8 @@ def view_paste_raw_file(paste_id, filename):
 
 @app.route('/api/languages')
 def get_languages():
-    return jsonify(CFG.get('languages', []))
+    # config.json's list first, then the rest of Prism's languages marked "more": true
+    return jsonify(_language_choices())
 
 @app.route('/api/config')
 def get_client_config():

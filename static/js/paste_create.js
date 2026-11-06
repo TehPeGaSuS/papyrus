@@ -64,11 +64,21 @@ document.addEventListener('DOMContentLoaded', function () {
             const auto = document.createElement('option');
             auto.value = 'auto';
             languageOptions.push(auto);
+            let more = null;                 // the site's own list first, then Prism's other languages
             langs.forEach(l => {
                 const o = document.createElement('option');
                 o.value = l.value;
                 o.textContent = l.name;
-                languageOptions.push(o);
+                if (l.more) {
+                    if (!more) {
+                        more = document.createElement('optgroup');
+                        more.label = 'More languages';
+                        languageOptions.push(more);
+                    }
+                    more.appendChild(o);
+                } else {
+                    languageOptions.push(o);
+                }
             });
             cards().forEach(fillLanguages);
         })

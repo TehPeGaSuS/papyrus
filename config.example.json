@@ -191,7 +191,8 @@
     "comments": true,
     "show_view_count": true,
     "allow_raw_api": true,
-    "keyboard_shortcuts": true
+    "keyboard_shortcuts": true,
+    "more_languages": true
   },
 
   "ui": {
